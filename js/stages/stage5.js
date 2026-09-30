@@ -1913,14 +1913,12 @@
       cei(3140, 's5_tentacle', { n: 6, first: 80 });
       gnd(3180, 's5_polyp');
 
-      /* ---- G: recovery ---- */
-      S.wave(3340, 's5_leech', { n: 5, gap: 14, y: 100, amp: 24, carry: 'last' });
-      S.wave(3360, 's5_eye', { n: 1, y: 112 });
-      S.wave(3372, 's5_leech', { n: 5, gap: 16, y: 150, dy: -14, amp: 6, carry: 'last' }); // rising line
-      S.wave(3410, 's5_leech', { n: 4, gap: 14, y: 90, amp: 20, carry: 'last' });
-      S.wave(3440, 's5_eye', { n: 1, y: 100 });
-      S.wave(3452, 's5_leech', { n: 4, gap: 14, y: 125, amp: 26, carry: 'last' });
-      S.wave(3488, 's5_leech', { n: 4, gap: 14, y: 105, amp: 22, carry: 'last' });
+      /* ---- G: recovery. Shoals of gold leeches that ALL carry a capsule: a ship that restarts at the last
+       *      checkpoint with nothing can rebuild its power (speed, missile, laser...) before the boss ---- */
+      S.wave(3340, 's5_leech', { n: 3, gap: 16, y: 100, amp: 16, carry: 'all' });
+      S.wave(3384, 's5_leech', { n: 3, gap: 16, y: 136, dy: 6, amp: 10, carry: 'all' });
+      S.wave(3428, 's5_leech', { n: 3, gap: 16, y: 88, dy: 8, amp: 12, carry: 'all' });
+      S.wave(3468, 's5_leech', { n: 4, gap: 14, y: 116, amp: 20, carry: 'last' });
 
       S.boss(BOSS_X, 'bigcore', { level: 5 });
     },

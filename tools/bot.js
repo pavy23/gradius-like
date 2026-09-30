@@ -17,6 +17,17 @@ window.__bot = function (opts) {
   const H_ = 224, W_ = 256;
   const ov = (ax, ay, aw, ah, bx, by, bw, bh) => Math.abs(ax - bx) * 2 < aw + bw && Math.abs(ay - by) * 2 < ah + bh;
 
+  // observed enemy velocity (screen px/frame) — many enemies move by writing e.x directly
+  const prev = (window.__botPrev = window.__botPrev || new WeakMap());
+  const vel = (e) => {
+    const p = prev.get(e);
+    if (p && p.f === G.frame - 1) return { vx: e.x - p.x, vy: e.y - p.y };
+    return { vx: e.attach ? -G.camSpeed : e.vx || 0, vy: e.attach ? 0 : e.vy || 0 };
+  };
+  const vels = new Map();
+  for (const e of G.enemies) { if (!e.dead) vels.set(e, vel(e)); }
+  for (const e of G.enemies) prev.set(e, { x: e.x, y: e.y, f: G.frame });
+
   // ---- choose a target ----
   let tx = 48, ty = P.y, prio = 0;
   const alive = G.enemies.filter(e => !e.dead && !e.harmless && !e.ghost);
@@ -51,6 +62,38 @@ window.__bot = function (opts) {
   }
   ty = bot > top ? clamp(ty, top, bot) : (top + bot) / 2;
 
+  // ---- long-range lane planning: if the lane we want will be hit within ~1 s, pick a safer lane early ----
+  const laneRisk = (yy) => {
+    const k0 = Math.max(1, Math.ceil(Math.abs(yy - P.y) / spd));
+    let r = 0;
+    for (let k = k0; k <= k0 + 45; k += 3) {
+      const cam = camX + cs * k;
+      if (T.rect(cam + P.x - 10, yy - 6, 20, 12)) r += 50;
+      for (const b of G.eb) {
+        if (b.dead || b.harmless) continue;
+        if (ov(P.x, yy, 14, 10, b.x + b.vx * k, b.y + b.vy * k, b.w, b.h)) r += 30;
+      }
+      for (const e of G.enemies) {
+        if (e.dead || e.harmless) continue;
+        const v = vels.get(e) || { vx: 0, vy: 0 };
+        const ex = e.x + v.vx * k, ey = e.y + v.vy * k;
+        if (e.parts) { for (const q of e.parts) { if (q.dead || q.harmless) continue; if (ov(P.x, yy, 16, 11, ex + q.ox, ey + q.oy, q.w, q.h)) r += 40; } }
+        else if (ov(P.x, yy, 16, 11, ex + (e.hx || 0), ey + (e.hy || 0), e.w, e.h)) r += 40;
+      }
+    }
+    return r;
+  };
+  if (laneRisk(ty) > 0) {
+    let bestY = ty, bestR = laneRisk(ty) + 1e-3;
+    const lo = Math.max(12, top), hi = Math.min(H_ - 24, bot > top ? bot : H_ - 24);
+    for (let yy = lo; yy <= hi; yy += 6) {
+      const r = laneRisk(yy) + Math.abs(yy - ty) * 0.04;
+      if (r < bestR) { bestR = r; bestY = yy; }
+    }
+    ty = bestY;
+    prio = Math.max(prio, 1);
+  }
+
   // ---- evaluate 9 moves ----
   const HZ = opts.horizon || 14;
   let bestMove = [0, 0], bestCost = 1e12;
@@ -70,8 +113,9 @@ window.__bot = function (opts) {
       }
       for (const e of G.enemies) {
         if (e.dead || e.harmless) continue;
-        const ex = e.attach ? e.x - cs * k : e.x + e.vx * k;
-        const ey = e.y + (e.attach ? 0 : e.vy * k);
+        const v = vels.get(e) || { vx: 0, vy: 0 };
+        const ex = e.x + v.vx * k;
+        const ey = e.y + v.vy * k;
         if (e.parts) {
           for (const p of e.parts) { if (p.dead || p.harmless) continue; if (ov(x, y, 16, 11, ex + p.ox, ey + p.oy, p.w, p.h)) cost += 500 * w; }
         } else if (ov(x, y, 16, 11, ex + (e.hx || 0), ey + (e.hy || 0), e.w, e.h)) cost += 500 * w;
