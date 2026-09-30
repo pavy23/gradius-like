@@ -133,6 +133,10 @@ const G = {
   toastMsg: '',
   toastT: 0,
   reduceFlash: false,
+  autoShot: false, // firing is automatic (default ON on touch-first devices, toggle: T / AUTO button / pad R3)
+  autoPref: '', // '1' / '0' once the player chose explicitly, '' = follow the device default
+  hintT: 0, // countdown of the "drag anywhere" hint shown at the first touch play
+  hinted: false,
   audioAnnounced: false,
   silentKick: false,
   fromTitle: false,
@@ -163,8 +167,12 @@ const G = {
     STAGES.sort((a, b) => a.id - b.id);
     Input.init();
     this.reduceFlash = Store.get('nova.noflash', '0') === '1';
+    // auto-fire: an explicit choice wins, otherwise ON for touch-first devices (phones / tablets)
+    this.autoPref = Store.get('nova.auto', '');
+    this.autoShot = this.autoPref === '' ? this.coarsePointer() : this.autoPref === '1';
 
     const q = new URLSearchParams(location.search);
+    if (q.get('auto') === '1' || q.get('auto') === '0') this.autoShot = q.get('auto') === '1'; // per-visit override
     if (q.get('god') === '1') this.god = true;
     if (q.get('debug') === '1') this.debug = true;
     if (q.get('diff') && DIFFS[q.get('diff')]) {
@@ -261,8 +269,36 @@ const G = {
     if (md.enter) md.enter.call(this, arg);
   },
 
+  coarsePointer() {
+    try {
+      return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+    } catch (e) {
+      return false;
+    }
+  },
+
+  /** true while the player is on the touch screen (on-screen controls built and touched last): menus show touch wording */
+  touchUI() {
+    return typeof TouchUI !== 'undefined' && TouchUI.active;
+  },
+
+  setAutoShot(on, silent) {
+    this.autoShot = !!on;
+    this.autoPref = this.autoShot ? '1' : '0';
+    Store.set('nova.auto', this.autoPref);
+    if (!silent) {
+      this.toast(this.autoShot ? 'AUTO SHOT ON' : 'AUTO SHOT OFF');
+      sfx('select');
+    }
+  },
+
+  toggleAuto() {
+    this.setAutoShot(!this.autoShot);
+  },
+
   step() {
     Input.update();
+    if (Input.pressed.auto) this.toggleAuto();
     if (Input.pressed.mute) {
       try {
         if (typeof Sound !== 'undefined') this.toast(Sound.toggleMute() ? 'SOUND OFF' : 'SOUND ON');
@@ -273,8 +309,8 @@ const G = {
       Store.set('nova.noflash', this.reduceFlash ? '1' : '0');
       this.toast(this.reduceFlash ? 'FLASH EFFECTS OFF' : 'FLASH EFFECTS ON');
     }
-    if (!this.audioAnnounced && typeof Sound !== 'undefined' && Sound.ctx && Sound.ctx.state === 'running') {
-      this.audioAnnounced = true;
+    if (!this.audioAnnounced && this.toastT <= 0 && typeof Sound !== 'undefined' && Sound.ctx && Sound.ctx.state === 'running') {
+      this.audioAnnounced = true; // (waits for a free toast slot so it never hides e.g. "AUTO SHOT ON")
       if (!Sound.muted) this.toast('SOUND ON');
     }
     if (this.toastT > 0) this.toastT--;
@@ -1026,18 +1062,26 @@ const G = {
   /** one line telling the player whether sound is on (and how to get it when the browser blocks it) */
   drawSoundStatus(c, y) {
     if (typeof Sound === 'undefined') return;
+    const touch = this.touchUI();
     let label, col;
     if (Sound.muted) {
-      label = 'SOUND OFF   M: TURN ON';
+      label = touch ? 'SOUND OFF   SOUND BUTTON: TURN ON' : 'SOUND OFF   M: TURN ON';
       col = '#ff8a8a';
     } else if (Sound.ctx && Sound.ctx.state === 'running') {
-      label = 'SOUND ON   M: MUTE';
+      label = touch ? 'SOUND ON   SOUND BUTTON: MUTE' : 'SOUND ON   M: MUTE';
       col = '#8cd8ff';
     } else {
-      label = 'CLICK OR PRESS ANY KEY TO ENABLE SOUND';
+      label = touch ? 'TAP THE SCREEN TO ENABLE SOUND' : 'CLICK OR PRESS ANY KEY TO ENABLE SOUND';
       col = ((this.frame / 20) | 0) % 2 === 0 ? '#ffe646' : '#ffffff'; // always visible, just pulses
     }
     if (label) PixFont.text(c, label, W / 2, y, { align: 'center', font: '3x5', color: col });
+  },
+
+  /** one line telling the player whether auto-fire is on and how to change it */
+  drawAutoStatus(c, y) {
+    const on = this.autoShot;
+    const how = this.touchUI() ? '   AUTO BUTTON: TOGGLE' : '   T: TOGGLE';
+    PixFont.text(c, 'AUTO SHOT: ' + (on ? 'ON' : 'OFF') + how, W / 2, y, { align: 'center', font: '3x5', color: on ? '#7dffb0' : '#8090c8' });
   },
 
   pad(n, w) {
@@ -1053,6 +1097,7 @@ const G = {
     PixFont.text(c, 'HI', 112, 3, { color: '#ff6a6a', shadow: '#000' });
     PixFont.text(c, this.pad(this.hi, 7), 128, 3, { color: '#ffffff', shadow: '#000' });
     if (this.stage) PixFont.text(c, 'ST ' + this.stage.id + (this.loop ? '-' + (this.loop + 1) : ''), W - 8, 3, { color: '#9eb4ff', shadow: '#000', align: 'right' });
+    if (this.autoShot) PixFont.text(c, 'AUTO', 188, 4, { font: '3x5', color: '#6cf0ff', shadow: '#000' });
 
     // boss gauge
     if (this.bossPhase === 'fight' && this.boss && !this.boss.dead && this.boss.def.gauge) {
@@ -1093,6 +1138,14 @@ const G = {
           c.fillRect(x + 2 + k * (max > 1 ? 3 : 0), y0 + 1, max > 1 ? 2 : 3, 1);
         }
       }
+    }
+
+    // first touch play: how to steer
+    if (this.hintT > 0) {
+      c.globalAlpha = clamp(this.hintT / 40, 0, 1);
+      PixFont.text(c, 'DRAG ANYWHERE TO MOVE', W / 2, 150, { align: 'center', color: '#ffffff', shadow: '#000' });
+      PixFont.text(c, this.autoShot ? 'AUTO SHOT IS ON' : 'HOLD THE SHOT BUTTON TO FIRE', W / 2, 162, { align: 'center', color: '#ffe646', shadow: '#000' });
+      c.globalAlpha = 1;
     }
 
     // banner
@@ -1188,17 +1241,24 @@ const MODES = {
       PixFont.text(c, 'NOVA', W / 2, 30, { align: 'center', scale: 5, rows, outline: '#0a0a30', spacing: 2 });
       PixFont.text(c, 'LANCER', W / 2, 72, { align: 'center', scale: 5, rows: ['#fff6c8', '#ffe270', '#ffb030', '#ff7820', '#d84018', '#a02010', '#601010'], outline: '#2a0808', spacing: 2 });
       PixFont.text(c, 'HORIZONTAL SHOOTER', W / 2, 112, { align: 'center', color: '#9eb4ff', shadow: '#000' });
-      if (((t / 30) | 0) % 2 === 0) PixFont.text(c, 'PRESS START', W / 2, 130, { align: 'center', scale: 2, color: '#ffffff', outline: '#000' });
+      const touch = this.touchUI();
+      if (((t / 30) | 0) % 2 === 0) PixFont.text(c, touch ? 'TAP TO START' : 'PRESS START', W / 2, 130, { align: 'center', scale: 2, color: '#ffffff', outline: '#000' });
       PixFont.text(c, '< ' + this.diff.name + ' >', W / 2, 154, { align: 'center', color: '#ffe646', shadow: '#000' });
       if (STAGES.length > 1) {
         const st = STAGES[this.startStage] || STAGES[0];
         PixFont.text(c, 'STAGE ' + st.id + '  ' + st.name, W / 2, 166, { align: 'center', color: '#8cd8ff', shadow: '#000' });
-        PixFont.text(c, 'UP/DOWN: STAGE   LEFT/RIGHT: LEVEL', W / 2, 176, { align: 'center', font: '3x5', color: '#8090c8' });
+        PixFont.text(c, touch ? 'SWIPE LEFT/RIGHT: LEVEL   UP/DOWN: STAGE' : 'UP/DOWN: STAGE   LEFT/RIGHT: LEVEL', W / 2, 176, { align: 'center', font: '3x5', color: '#8090c8' });
       }
-      PixFont.text(c, 'HI ' + this.pad(this.hi, 7), W / 2, 187, { align: 'center', color: '#ffffff', shadow: '#000' });
-      this.drawSoundStatus(c, 197);
-      PixFont.text(c, 'ARROWS/WASD:MOVE  Z/SPACE:SHOT  X/SHIFT:POWER UP', W / 2, 204, { align: 'center', font: '3x5', color: '#8090c8' });
-      PixFont.text(c, 'P:PAUSE  M:MUTE  F:FULLSCREEN  V:FLASH  ENTER/CLICK:START', W / 2, 211, { align: 'center', font: '3x5', color: '#8090c8' });
+      this.drawAutoStatus(c, 183);
+      PixFont.text(c, 'HI ' + this.pad(this.hi, 7), W / 2, 190, { align: 'center', color: '#ffffff', shadow: '#000' });
+      this.drawSoundStatus(c, 199);
+      if (touch) {
+        PixFont.text(c, 'DRAG ANYWHERE: MOVE   POWER BUTTON: POWER UP', W / 2, 206, { align: 'center', font: '3x5', color: '#8090c8' });
+        PixFont.text(c, 'II: PAUSE   TAP: START', W / 2, 213, { align: 'center', font: '3x5', color: '#8090c8' });
+      } else {
+        PixFont.text(c, 'ARROWS/WASD:MOVE  Z/SPACE:SHOT  X/SHIFT:POWER UP', W / 2, 206, { align: 'center', font: '3x5', color: '#8090c8' });
+        PixFont.text(c, 'P:PAUSE  M:MUTE  F:FULLSCREEN  V:FLASH  ENTER/CLICK:START', W / 2, 213, { align: 'center', font: '3x5', color: '#8090c8' });
+      }
     },
   },
 
@@ -1239,12 +1299,17 @@ const MODES = {
     enter() {
       bgm.play(this.stage.music, { restart: true });
       if (this.modeT === 0 && this.camX === this.stage.checkpoints[0]) this.showBanner(['STAGE ' + this.stage.id, this.stage.name], 110);
+      if (!this.hinted && this.touchUI()) {
+        this.hinted = true;
+        this.hintT = 260;
+      }
     },
     update() {
       if (Input.pressed.pause) {
         this.setMode('paused');
         return;
       }
+      if (this.hintT > 0) this.hintT--;
       this.stepWorld();
     },
     draw(c) {
@@ -1272,10 +1337,12 @@ const MODES = {
       this.drawHud(c);
       c.fillStyle = 'rgba(0,0,20,0.55)';
       c.fillRect(0, 0, W, H);
+      const touch = this.touchUI();
       PixFont.text(c, 'PAUSE', W / 2, 92, { align: 'center', scale: 3, color: '#ffffff', outline: '#102060' });
-      PixFont.text(c, 'P / ENTER : RESUME', W / 2, 124, { align: 'center', color: '#ffe646', shadow: '#000' });
-      PixFont.text(c, 'Q : QUIT TO TITLE', W / 2, 138, { align: 'center', color: '#9eb4ff', shadow: '#000' });
+      PixFont.text(c, touch ? 'TAP ANYWHERE : RESUME' : 'P / ENTER : RESUME', W / 2, 124, { align: 'center', color: '#ffe646', shadow: '#000' });
+      PixFont.text(c, touch ? 'QUIT BUTTON : QUIT TO TITLE' : 'Q : QUIT TO TITLE', W / 2, 138, { align: 'center', color: '#9eb4ff', shadow: '#000' });
       this.drawSoundStatus(c, 154);
+      this.drawAutoStatus(c, 164);
     },
   },
 
@@ -1306,8 +1373,9 @@ const MODES = {
       PixFont.text(c, 'GAME OVER', W / 2, 84, { align: 'center', scale: 3, color: '#ff5a5a', outline: '#300000' });
       PixFont.text(c, 'SCORE ' + this.pad(this.score, 7), W / 2, 116, { align: 'center', color: '#ffffff', shadow: '#000' });
       if (this.modeT > 90) {
-        if (((this.modeT / 30) | 0) % 2 === 0) PixFont.text(c, 'ENTER : CONTINUE', W / 2, 140, { align: 'center', color: '#ffe646', shadow: '#000' });
-        PixFont.text(c, 'ESC : TITLE', W / 2, 154, { align: 'center', color: '#9eb4ff', shadow: '#000' });
+        const touch = this.touchUI();
+        if (((this.modeT / 30) | 0) % 2 === 0) PixFont.text(c, touch ? 'TAP : CONTINUE' : 'ENTER : CONTINUE', W / 2, 140, { align: 'center', color: '#ffe646', shadow: '#000' });
+        PixFont.text(c, touch ? 'QUIT BUTTON : TITLE' : 'ESC : TITLE', W / 2, 154, { align: 'center', color: '#9eb4ff', shadow: '#000' });
       }
     },
   },
@@ -1345,8 +1413,9 @@ const MODES = {
       if (this.continues) PixFont.text(c, 'CONTINUES ' + this.continues, W / 2, y + 100, { align: 'center', color: '#ff8080', shadow: '#000' });
       Sprites.draw(c, 'flame', 100 + ((this.frame * 0.6) % 180) - 17, 170, { frame: (this.frame >> 1) & 1 });
       Sprites.draw(c, 'ship', 100 + ((this.frame * 0.6) % 180), 170, { frame: 0 });
-      if (this.modeT > 300 && ((this.modeT / 30) | 0) % 2 === 0) PixFont.text(c, 'PRESS START : NEXT LOOP', W / 2, 198, { align: 'center', color: '#ffffff', shadow: '#000' });
-      if (this.modeT > 300) PixFont.text(c, 'ESC : TITLE', W / 2, 210, { align: 'center', font: '3x5', color: '#8090c8' });
+      const touch = this.touchUI();
+      if (this.modeT > 300 && ((this.modeT / 30) | 0) % 2 === 0) PixFont.text(c, touch ? 'TAP : NEXT LOOP' : 'PRESS START : NEXT LOOP', W / 2, 198, { align: 'center', color: '#ffffff', shadow: '#000' });
+      if (this.modeT > 300) PixFont.text(c, touch ? 'QUIT BUTTON : TITLE' : 'ESC : TITLE', W / 2, 210, { align: 'center', font: '3x5', color: '#8090c8' });
     },
   },
 };

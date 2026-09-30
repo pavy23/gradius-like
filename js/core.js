@@ -56,7 +56,7 @@ const Store = {
  * Call Input.update() once per simulation step.
  * ------------------------------------------------------------------ */
 const Input = (() => {
-  const ACTIONS = ['left', 'right', 'up', 'down', 'fire', 'power', 'start', 'pause', 'mute', 'back', 'quit', 'flash'];
+  const ACTIONS = ['left', 'right', 'up', 'down', 'fire', 'power', 'start', 'pause', 'mute', 'back', 'quit', 'flash', 'auto'];
   const KEYMAP = {
     left: ['ArrowLeft', 'KeyA'],
     right: ['ArrowRight', 'KeyD'],
@@ -70,6 +70,7 @@ const Input = (() => {
     back: ['Escape', 'Backspace'],
     quit: ['KeyQ'],
     flash: ['KeyV'],
+    auto: ['KeyT'],
   };
   const PREVENT = new Set([
     'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space', 'Enter',
@@ -78,6 +79,7 @@ const Input = (() => {
   const keys = new Set();
   const edge = {}; // pressed between two updates (so very short taps are not lost)
   const virt = {}; // injected by touch controls / tests
+  const drag = { x: 0, y: 0 }; // relative finger movement (game pixels) waiting to be applied by the player
   const api = {
     held: {},
     pressed: {},
@@ -105,6 +107,38 @@ const Input = (() => {
     },
     clearVirtual() {
       for (const k in virt) virt[k] = false;
+      drag.x = drag.y = 0;
+    },
+    /** touch layer: the finger moved by (dx,dy) game pixels; the player picks it up with takeDrag() */
+    addDrag(dx, dy) {
+      drag.x += dx;
+      drag.y += dy;
+      const m = Math.hypot(drag.x, drag.y);
+      if (m > 48) {
+        drag.x *= 48 / m;
+        drag.y *= 48 / m;
+      }
+    },
+    /**
+     * The move to apply this simulation step: at most `cap` pixels (the ship's top speed). A short backlog (3 steps)
+     * keeps a fast flick smooth without letting the ship coast on after the finger has stopped.
+     */
+    takeDrag(cap) {
+      const m = Math.hypot(drag.x, drag.y);
+      if (m < 1e-6) return [0, 0];
+      const k = m > cap ? cap / m : 1;
+      const sx = drag.x * k, sy = drag.y * k;
+      drag.x -= sx;
+      drag.y -= sy;
+      const r = Math.hypot(drag.x, drag.y), max = cap * 3;
+      if (r > max) {
+        drag.x *= max / r;
+        drag.y *= max / r;
+      }
+      return [sx, sy];
+    },
+    clearDrag() {
+      drag.x = drag.y = 0;
     },
     _pad() {
       const out = {};
@@ -123,6 +157,7 @@ const Input = (() => {
         if (b(9) || b(0)) out.start = true;
         if (b(9)) out.pause = true;
         if (b(8)) out.back = true;
+        if (b(11)) out.auto = true; // R3 (right stick click)
       }
       return out;
     },

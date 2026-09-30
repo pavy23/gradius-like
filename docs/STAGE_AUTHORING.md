@@ -215,10 +215,13 @@ unpause tentacle cellPop electric stomp warp`. Music tracks: `stage1..stage7`, `
   The bot is an autopilot, not a human: it dodges bullets by short-horizon prediction, so a stage that it clears has
   no unavoidable hits, but human difficulty is higher. It cannot foresee growing hit boxes (geysers) or read telegraphs.
 * **URL parameters**: `?stage=N` (start at the N-th registered stage, 1-based), `&god=1` (invulnerable), `&diff=easy|normal|hard`,
-  `&debug=1` (entity counters), `&manual=1` (the page does not start its own loop; tests call `G.step()` / `G.render()`).
+  `&debug=1` (entity counters), `&manual=1` (the page does not start its own loop; tests call `G.step()` / `G.render()`),
+  `&auto=1|0` (auto-fire for this visit only), `&touch=1` (build the touch controls on a desktop), `&sens=1.3` (touch drag feel).
 * **Scripting the page** (from Playwright or the console): `G.step()` advances one frame (call `G.render()` before a
   screenshot); `G.resetWorld(camX)` + `G.player.respawn(false)` teleports to a scroll position; `G.player.speedLv = 5;
-  G.player.laser = true; G.player.options = 4;` grants upgrades; `Input.setVirtual('fire', true)` presses keys;
+  G.player.laser = true; G.player.options = 4;` grants upgrades; `Input.setVirtual('fire', true)` presses keys
+  (or `G.autoShot = true` to fire without holding anything); `Input.addDrag(dx, dy)` requests a finger-style move in game
+  pixels (the player applies at most `Player.dragSpeed()` per step);
   `G.gallery('prefix')` draws a sprite sheet; `Math.random` can be replaced by a seeded generator for reproducible runs.
 * Always look at screenshots of every section, every enemy type and each boss phase (contact sheets of a whole stage
   are easy to render by drawing `G.bg` + `G.terrain` for successive `camX` values). Check that nothing overlaps the HUD
