@@ -12,7 +12,6 @@ window.__bot = function (opts) {
   const P = G.player;
   const set = (a, v) => Input.setVirtual(a, v);
   if (G.mode !== 'play' || !P.alive) { set('left', false); set('right', false); set('up', false); set('down', false); return; }
-  if (opts.every && G.frame % opts.every !== 0) { Input.setVirtual('fire', true); return; }
   const T = G.terrain, camX = G.camX, spd = P.speed(), cs = G.camSpeed;
   const H_ = 224, W_ = 256;
   const ov = (ax, ay, aw, ah, bx, by, bw, bh) => Math.abs(ax - bx) * 2 < aw + bw && Math.abs(ay - by) * 2 < ah + bh;
@@ -21,12 +20,15 @@ window.__bot = function (opts) {
   const prev = (window.__botPrev = window.__botPrev || new WeakMap());
   const vel = (e) => {
     const p = prev.get(e);
-    if (p && p.f === G.frame - 1) return { vx: e.x - p.x, vy: e.y - p.y };
+    const dt = p ? G.frame - p.f : 0;
+    if (p && dt >= 1 && dt <= 12) return { vx: (e.x - p.x) / dt, vy: (e.y - p.y) / dt };
     return { vx: e.attach ? -G.camSpeed : e.vx || 0, vy: e.attach ? 0 : e.vy || 0 };
   };
   const vels = new Map();
   for (const e of G.enemies) { if (!e.dead) vels.set(e, vel(e)); }
   for (const e of G.enemies) prev.set(e, { x: e.x, y: e.y, f: G.frame });
+
+  if (opts.every && G.frame % opts.every !== 0) { Input.setVirtual('fire', true); return; }
 
   // ---- choose a target ----
   let tx = 48, ty = P.y, prio = 0;
@@ -53,9 +55,9 @@ window.__bot = function (opts) {
     if (best) { ty = best.y; }
     else ty = 112;
   }
-  // stay inside the free corridor of the next ~110 px (probe several columns so tall thin pillars are seen)
+  // stay inside the free corridor of the next ~50 px (probe several columns so tall thin pillars are seen)
   let top = 0, bot = H_;
-  for (let dx = 0; dx <= 110; dx += 5) {
+  for (let dx = 0; dx <= 50; dx += 5) {
     const cx = camX + Math.min(W_ - 1, P.x + dx);
     top = Math.max(top, T.ceilBottom(cx) + 14);
     bot = Math.min(bot, T.floorTop(cx) - 14);
@@ -85,7 +87,7 @@ window.__bot = function (opts) {
   };
   if (laneRisk(ty) > 0) {
     let bestY = ty, bestR = laneRisk(ty) + 1e-3;
-    const lo = Math.max(12, top), hi = Math.min(H_ - 24, bot > top ? bot : H_ - 24);
+    const lo = 16, hi = H_ - 26; // terrain is part of laneRisk, so search every lane
     for (let yy = lo; yy <= hi; yy += 6) {
       const r = laneRisk(yy) + Math.abs(yy - ty) * 0.04;
       if (r < bestR) { bestR = r; bestY = yy; }

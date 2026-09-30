@@ -23,10 +23,10 @@ const BC_PALS = [
 const BC_CFG = [
   null,
   { plateHp: 14, coreHp: 190, laserEvery: 150, volleys: 1, orbEvery: 0, openT: 360, closedT: 100, speed: 0.55 },
-  { plateHp: 16, coreHp: 215, laserEvery: 135, volleys: 2, orbEvery: 110, openT: 360, closedT: 100, speed: 0.6 },
-  { plateHp: 18, coreHp: 240, laserEvery: 125, volleys: 2, orbEvery: 90, openT: 350, closedT: 95, speed: 0.65 },
-  { plateHp: 20, coreHp: 265, laserEvery: 115, volleys: 3, orbEvery: 80, openT: 350, closedT: 90, speed: 0.7 },
-  { plateHp: 22, coreHp: 290, laserEvery: 105, volleys: 3, orbEvery: 70, openT: 340, closedT: 90, speed: 0.8 },
+  { plateHp: 15, coreHp: 200, laserEvery: 140, volleys: 2, orbEvery: 110, openT: 360, closedT: 100, speed: 0.6 },
+  { plateHp: 16, coreHp: 210, laserEvery: 130, volleys: 2, orbEvery: 95, openT: 360, closedT: 95, speed: 0.62 },
+  { plateHp: 17, coreHp: 220, laserEvery: 120, volleys: 2, orbEvery: 85, openT: 360, closedT: 95, speed: 0.66 },
+  { plateHp: 18, coreHp: 230, laserEvery: 115, volleys: 3, orbEvery: 80, openT: 360, closedT: 90, speed: 0.7 },
 ];
 
 function bakeBigCoreArt() {

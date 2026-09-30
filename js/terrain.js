@@ -386,7 +386,9 @@ const Terrain = (() => {
       const cLo = rgb32(sk.lo || '#000000');
       const cBot = sk.bottomOutline ? rgb32(sk.bottomOutline) : cOut;
       // per-block vertical offsets break the visible repetition of the tile
-      const shifts = Array.from({ length: Math.ceil(L / tw) + 2 }, () => Math.floor(rng() * th));
+      // (only for irregular rock: structured tiles — bricks, panels, veins, cells — must stay seamless)
+      const useShift = sk.shift !== undefined ? !!sk.shift : kind === 'rock';
+      const shifts = Array.from({ length: Math.ceil(L / tw) + 2 }, () => (useShift ? Math.floor(rng() * th) : 0));
       const img = new ImageData(L, H);
       const out = new Uint32Array(img.data.buffer);
       const fade = sk.fade || 0;

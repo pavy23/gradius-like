@@ -445,7 +445,7 @@ const G = {
     if (e.def.onPartHurt) e.def.onPartHurt(e, p, dmg, src);
     if (p.hp <= 0) {
       p.dead = true;
-      this.explode(e.x + p.ox, e.y + p.oy, p.expl || 'm');
+      this.explode(e.x + p.ox, e.y + p.oy, p.expl || 'm', { scroll: !!e.attach });
       this.addScore(p.score || 100);
       if (e.def.onPartDeath) e.def.onPartDeath(e, p);
     } else sfx('hit');
@@ -856,6 +856,12 @@ const G = {
       if (e.parts) {
         for (const p of e.parts) {
           if (p.dead || p.harmless) continue;
+          // a live shield absorbs one contact with a part and grants a short grace period to back off
+          if (shieldOn && P.shield > 0 && P.inv <= 0 && overlap(P.x + 18, P.y, 9, 25, e.x + p.ox, e.y + p.oy, p.w, p.h)) {
+            P.absorbShield();
+            P.inv = Math.max(P.inv, 45);
+            break;
+          }
           if (overlap(P.x, P.y, 9, 5, e.x + p.ox, e.y + p.oy, p.w, p.h)) {
             this.lastHit = { kind: 'enemy', name: e.type + '.' + (p.name || ''), camX: this.camX };
             P.hit();

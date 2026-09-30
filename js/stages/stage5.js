@@ -9,7 +9,9 @@
  * Layout (camera x): A gullet 0-400 (calm intro) - B tentacle garden
  * 400-820 - C eye chamber 820-1200 - D throat with sticky membranes and
  * squeeze valves 1200-1620 - quiet stretch - E mid-boss chamber 1840-2600
- * (scroll slows to 0.55) - F gauntlet 2600-3240 - G recovery - boss arena.
+ * (scroll slows to 0.55) - F gauntlet 2600-3240 - G recovery 3240-3510
+ * (shoals of gold leeches that all carry a capsule, so a ship restarting at
+ * the last checkpoint can rebuild its power) - boss arena.
  * Checkpoints 0 / 820 / 1620 / 2600 / 3240.
  *
  * Enemies (all keys are prefixed s5_; spawn options in brackets):
@@ -683,7 +685,7 @@
       const P = G.player, T = G.terrain;
       const wx = G.camX + e.x;
       e.mid += (s5_mid(wx) - e.mid) * 0.06;
-      e.y = clamp(e.mid + e.rel + Math.sin(e.t * 0.035 + e.ph) * e.amp, T.ceilBottom(wx) + 13, T.floorTop(wx) - 13);
+      e.vy = clamp(e.mid + e.rel + Math.sin(e.t * 0.035 + e.ph) * e.amp, T.ceilBottom(wx) + 13, T.floorTop(wx) - 13) - e.y; // moved by the engine (vx/vy)
       const c = (e.t + e.off) % e.cyc;
       const target = c >= 14 && c < e.cyc - 22 ? 1 : 0;
       e.lid += clamp(target - e.lid, -0.34, 0.34);
