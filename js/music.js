@@ -47,8 +47,16 @@
  *    echo [level, steps, feedback]; fm [ratio, index, decay_s]; mix {k:..,s:..} per-drum multipliers;
  *    range ['C2','C5'] (validation only).
  *
- *  Public API: Music.play(name, opts) / stop(fade) / pause() / resume() / setRate(r) / list() / validate()
- *              Music.current, Music.tracks, Music.info(name); test hook Music._renderOffline().
+ *  Public API
+ *    Music.play(name, {loop, fade, volume, onend, restart})   loop defaults to the track's own setting (jingles: false);
+ *                                     the same track playing again is ignored unless restart:true; switching tracks
+ *                                     fades the old one out over 0.15 s. Safe before Sound.init() (remembered).
+ *    Music.stop(fadeSec = 0.3)        Music.pause() / resume()   keep the song position (used for game pause)
+ *    Music.setRate(r)                 tempo multiplier, default 1 (e.g. 1.05 for a boss' last seconds)
+ *    Music.current  Music.tracks  Music.list()  Music.isPlaying()
+ *    Music.validate([name])           array of problem strings, empty = OK (bar lengths, tokens, ranges, scale, ...)
+ *    Music.info(name)  Music.invalidate(name)   (call invalidate after editing a track's data at runtime)
+ *    Test hooks: Music._renderOffline(name, seconds, opts) (Promise<Float32Array>), _compile, _state, _flush.
  * ========================================================================== */
 const Music = (function () {
 
@@ -60,6 +68,7 @@ const Music = (function () {
   const MIDI_MIN = 24, MIDI_MAX = 96;  // C1 .. C7
 
   const M = { tracks: {}, current: null, rate: 1 };
+  const EMPTY = {};                    // shared default options: repeated Music.play(name) calls allocate nothing
 
   const warned = {};
   function warnOnce(key, msg, err) {
@@ -334,7 +343,11 @@ const Music = (function () {
   function ended() {
     try { this.disconnect(); } catch (e) { /* ignore */ }
     if (this._a) { try { this._a.disconnect(); } catch (e) { /* ignore */ } this._a = null; }
-    if (this._b) { try { this._b.disconnect(); } catch (e) { /* ignore */ } this._b = null; }
+    if (this._b) {
+      if (this._l) { try { this._l.disconnect(this._b); } catch (e) { /* ignore */ } this._l = null; }   // else the shared LFO would keep a dead tap
+      try { this._b.disconnect(); } catch (e) { /* ignore */ }
+      this._b = null;
+    }
     if (this._c) { try { this._c.disconnect(); } catch (e) { /* ignore */ } this._c = null; }
   }
 
@@ -353,10 +366,12 @@ const Music = (function () {
     src.loop = true;
     const f = ctx.createBiquadFilter();
     f.type = type;
+    f.frequency.value = f0;                // initial value first: an event at a mid-quantum start time would otherwise begin at the 350 Hz default
     f.frequency.setValueAtTime(f0, t);
     if (f1) f.frequency.exponentialRampToValueAtTime(f1, t + dur);
     f.Q.value = q;
     const g = ctx.createGain();
+    g.gain.value = 0;                      // silent until the envelope starts (a fresh GainNode defaults to 1.0)
     g.gain.setValueAtTime(amp, t);
     g.gain.exponentialRampToValueAtTime(amp * 0.001, t + dur);
     src.connect(f); f.connect(g); g.connect(out);
@@ -370,9 +385,11 @@ const Music = (function () {
   function dTone(ctx, out, t, type, f0, f1, tf, dur, amp, chan, slot) {
     const o = ctx.createOscillator();
     o.type = type;
+    o.frequency.value = f0;
     o.frequency.setValueAtTime(f0, t);
     o.frequency.exponentialRampToValueAtTime(f1, t + tf);
     const g = ctx.createGain();
+    g.gain.value = 0;
     g.gain.setValueAtTime(amp, t);
     g.gain.exponentialRampToValueAtTime(amp * 0.001, t + dur);
     o.connect(g); g.connect(out);
@@ -554,6 +571,7 @@ const Music = (function () {
     // amplitude envelope: attack -> exponential decay to sustain level -> hold -> linear release
     const env = ctx.createGain();
     const gp = env.gain;
+    gp.value = 0;                                                    // never let a sample through before the envelope starts
     let a = I.a;
     if (a > dur * 0.5) a = dur * 0.5;
     gp.setValueAtTime(0, t);
@@ -571,19 +589,25 @@ const Music = (function () {
     const osc = ctx.createOscillator();
     setWave(osc, ctx, I.w);
     const fp = osc.frequency;
+    // NB: fp.value is set to the start pitch before any event; otherwise Chrome runs the first samples of a note that
+    // starts mid render-quantum at the param default (440 Hz), which randomizes the waveform phase of every note.
     if (n.freqs.length > 1) {                                        // chord -> fast arpeggio on one voice
       const fs = n.freqs, ai = 1 / I.arpHz;
       let k = 0;
+      fp.value = fs[0];
       for (let tt = t; tt < tOff; tt += ai, k++) fp.setValueAtTime(fs[k % fs.length], tt);
     } else {
       const f = n.f;
       if (I.port > 0 && chan.lastF > 0 && t - chan.lastEnd < 0.04 && chan.lastF !== f) {
+        fp.value = chan.lastF;
         fp.setValueAtTime(chan.lastF, t);
         fp.exponentialRampToValueAtTime(f, t + Math.min(I.port, dur * 0.8));
       } else if (I.bend && lenSteps >= I.bendMin) {
-        fp.setValueAtTime(f * Math.pow(2, I.bend / 12), t);
+        const f0 = f * Math.pow(2, I.bend / 12);
+        fp.value = f0;
+        fp.setValueAtTime(f0, t);
         fp.exponentialRampToValueAtTime(f, t + I.bendT);
-      } else fp.setValueAtTime(f, t);
+      } else { fp.value = f; fp.setValueAtTime(f, t); }
       chan.lastF = f;
     }
     chan.lastEnd = tOff;
@@ -591,18 +615,22 @@ const Music = (function () {
     let vg = null;
     if (chan.vlfo && n.freqs.length === 1 && dur > I.vib[2] + 0.06) {   // vibrato fades in after vib[2] seconds
       vg = ctx.createGain();
+      vg.gain.value = 0;
       vg.gain.setValueAtTime(0, t);
       vg.gain.setValueAtTime(0, t + I.vib[2]);
       vg.gain.linearRampToValueAtTime(I.vib[1], t + I.vib[2] + 0.12);
       chan.vlfo.connect(vg);
       vg.connect(osc.detune);
+      osc._l = chan.vlfo;
     }
     let mg = null;
     if (I.w === 'fm') {                                              // 2-operator FM: sine modulator on carrier frequency
       const fm = I.fm || [2, 2, 0.3];
       const mod = ctx.createOscillator();
+      mod.frequency.value = n.f * fm[0];
       mod.frequency.setValueAtTime(n.f * fm[0], t);
       mg = ctx.createGain();
+      mg.gain.value = 0;
       const dev = fm[1] * n.f * fm[0];
       mg.gain.setValueAtTime(dev, t);
       mg.gain.exponentialRampToValueAtTime(dev * 0.04, t + fm[2]);
@@ -718,9 +746,15 @@ const Music = (function () {
     return typeof Sound !== 'undefined' && Sound && Sound.ctx && Sound.musicBus;
   }
 
+  // a new / resumed track means the game is running: wake audio that Sound.suspend() froze (no-op if the page is hidden)
+  function wakeAudio() {
+    try { if (Sound.wake) Sound.wake(); } catch (e) { /* ignore */ }
+  }
+
   function startTrack(name, opts) {
     const C = getC(name);
     if (!C) return false;
+    wakeAudio();
     const ctx = Sound.ctx;
     const now = ctx.currentTime;
     let startAt = now + 0.03;
@@ -746,8 +780,8 @@ const Music = (function () {
   M.play = function (name, opts) {
     try {
       const T = M.tracks[name];
-      if (!T) { warnOnce('track:' + name, 'Music.play: unknown track "' + name + '"'); return false; }
-      opts = opts || {};
+      if (!T) { if (haveAudio()) warnOnce('track:' + name, 'Music.play: unknown track "' + name + '"'); return false; }
+      opts = opts || EMPTY;
       if (!haveAudio()) { pending = { name: name, opts: opts }; M.current = name; return true; }
       if (cur && !cur.dead && M.current === name && !opts.restart) return true;
       pending = null;
@@ -788,6 +822,7 @@ const Music = (function () {
     try {
       const p = cur;
       if (!p || !p.paused || p.dead || !haveAudio()) return;
+      wakeAudio();
       p.paused = false;
       if (p.resumePos >= p.C.steps) { p.done = true; p.endTime = 0; startTimer(); return; }     // paused during the tail of a jingle
       const now = p.ctx.currentTime;
@@ -855,6 +890,9 @@ const Music = (function () {
 
   M._compile = function (name) { return compileTrack(name, M.tracks[name]); };   // test hook: compiled events
 
+  // Forget the compiled form of a track (only needed after editing its data in place at runtime).
+  M.invalidate = function (name) { try { if (M.tracks[name]) cache.delete(M.tracks[name]); } catch (e) { /* ignore */ } };
+
   M.info = function (name) {
     const c = compileTrack(name, M.tracks[name]);
     const stepSec = 60 / c.bpm / 4;
@@ -918,7 +956,7 @@ const Music = (function () {
 
 // TITLE -- D major, 124 BPM, 16 bars: A (heroic dotted theme, harmony enters at bar 5) / B (soaring, lyrical)
 Music.tracks.title = {
-  name: 'Title', bpm: 124, scale: 'D major', chromatic: [], loop: true, loopStart: 0, gain: 1,
+  name: 'Title', bpm: 124, scale: 'D major', chromatic: [], loop: true, loopStart: 0, gain: 0.77,
   chords: `
     D
     A
@@ -938,27 +976,13 @@ Music.tracks.title = {
     A
   `,
   pat: {
-    g1: `
-      kh . h . | sh . h . | kh . kh . | sh . h .
-    `,
-    g1c: `
-      kch . h . | sh . h . | kh . kh . | sh . h .
-    `,
-    f4: `
-      kh . h . | sh . h . | kh . h . | s s t m
-    `,
-    f8: `
-      kh . h . | sh . h . | k . s . | s t m d
-    `,
-    gB: `
-      kch . o . | s . o . | kh . o k | s . o .
-    `,
-    gB2: `
-      kh . o . | s . o . | kh . o k | s . o .
-    `,
-    f16: `
-      kh . o . | s . o . | k . s . | s s t t
-    `,
+    g1: `kh . h . | sh . h . | kh . kh . | sh . h .`,
+    g1c: `kch . h . | sh . h . | kh . kh . | sh . h .`,
+    f4: `kh . h . | sh . h . | kh . h . | s s t m`,
+    f8: `kh . h . | sh . h . | k . s . | s t m d`,
+    gB: `kch . o . | s . o . | kh . o k | s . o .`,
+    gB2: `kh . o . | s . o . | kh . o k | s . o .`,
+    f16: `kh . o . | s . o . | k . s . | s s t t`,
   },
   ch: {
     lead: { w: 'pulse25', vol: 0.23, a: 0.006, d: 0.3, s: 0.8, r: 0.06, g: 0.94, vib: [5.6, 14, 0.16], bend: -0.3, bendT: 0.045, echo: [0.14, 3, 0.32], pan: 0.05, bars: `
@@ -1048,7 +1072,7 @@ Music.tracks.title = {
 
 // STAGE 1 (Volcano) -- E minor, 150 BPM, 24 bars: A (rising-arpeggio hook) / B (3-3-2 chase) / A' (hook + harmony)
 Music.tracks.stage1 = {
-  name: 'Volcano', bpm: 150, scale: 'E minor', chromatic: ['D#'], loop: true, loopStart: 0, gain: 1,
+  name: 'Volcano', bpm: 150, scale: 'E minor', chromatic: ['D#'], loop: true, loopStart: 0, gain: 0.71,
   chords: `
     Em
     Em
@@ -1076,24 +1100,12 @@ Music.tracks.stage1 = {
     B7
   `,
   pat: {
-    gA: `
-      kh . h . | sh . h . | kh . kh . | sh . h k
-    `,
-    fA: `
-      kh . h . | sh . h . | kh . kh . | s s t m
-    `,
-    fA2: `
-      kh . h . | sh . h . | k . s . | s t m d
-    `,
-    gB: `
-      kch h, h h, | sh h, h h, | kh h, kh h, | sh h, h h,
-    `,
-    gB2: `
-      kh h, h h, | sh h, h h, | kh h, kh h, | sh h, h h,
-    `,
-    fB: `
-      kh h, h h, | sh h, h h, | k h, s h, | s s t t
-    `,
+    gA: `kh . h . | sh . h . | kh . kh . | sh . h k`,
+    fA: `kh . h . | sh . h . | kh . kh . | s s t m`,
+    fA2: `kh . h . | sh . h . | k . s . | s t m d`,
+    gB: `kch h, h h, | sh h, h h, | kh h, kh h, | sh h, h h,`,
+    gB2: `kh h, h h, | sh h, h h, | kh h, kh h, | sh h, h h,`,
+    fB: `kh h, h h, | sh h, h h, | k h, s h, | s s t t`,
   },
   ch: {
     lead: { w: 'pulse25', vol: 0.23, a: 0.006, d: 0.3, s: 0.8, r: 0.06, g: 0.94, vib: [6.2, 16, 0.14], bend: -0.3, bendT: 0.045, echo: [0.14, 3, 0.32], pan: 0.05, bars: `
@@ -1244,7 +1256,7 @@ Music.tracks.stage1 = {
 
 // STAGE 2 (Stonehenge) -- D Dorian (+ Phrygian Eb cadence), 132 BPM, 24 bars: ostinato intro / organum theme / majestic B / turnaround
 Music.tracks.stage2 = {
-  name: 'Stonehenge', bpm: 132, scale: 'D dorian', chromatic: ['Eb', 'Bb'], loop: true, loopStart: 0, gain: 1,
+  name: 'Stonehenge', bpm: 132, scale: 'D dorian', chromatic: ['Eb', 'Bb'], loop: true, loopStart: 0, gain: 0.71,
   chords: `
     Dmadd9
     Dmadd9
@@ -1272,27 +1284,13 @@ Music.tracks.stage2 = {
     Dmadd9
   `,
   pat: {
-    dI: `
-      dh, . . . | h, . . . | mh, . . . | h, . t .
-    `,
-    dA: `
-      dh, . . . | h, . . t | mh, . . . | h, . t m
-    `,
-    dA2: `
-      dh, . . . | h, . . t | mh, . . . | h, t m d
-    `,
-    mB: `
-      kc . . . | s . . . | k . . k | sh, . t m
-    `,
-    mB2: `
-      k . . . | s . . . | k . . k | s . t m
-    `,
-    mBf: `
-      k . . . | s . . . | k . t . | m . d d
-    `,
-    dT: `
-      d . . . | . . . . | m . . . | . . . .
-    `,
+    dI: `dh, . . . | h, . . . | mh, . . . | h, . t .`,
+    dA: `dh, . . . | h, . . t | mh, . . . | h, . t m`,
+    dA2: `dh, . . . | h, . . t | mh, . . . | h, t m d`,
+    mB: `kc . . . | s . . . | k . . k | sh, . t m`,
+    mB2: `k . . . | s . . . | k . . k | s . t m`,
+    mBf: `k . . . | s . . . | k . t . | m . d d`,
+    dT: `d . . . | . . . . | m . . . | . . . .`,
   },
   ch: {
     lead: { w: 'fm', fm: [1, 1.6, 1.4], vol: 0.2, a: 0.03, d: 0.5, s: 0.85, r: 0.25, g: 0.97, vib: [5, 11, 0.3], echo: [0.22, 6, 0.4], pan: 0.05, bars: `
@@ -1420,7 +1418,7 @@ Music.tracks.stage2 = {
 
 // STAGE 3 (Moai) -- A minor (pentatonic riffs, Eb blue note), 138 BPM, light swing, 24 bars: A riff+hocket / B call-response tune / A'
 Music.tracks.stage3 = {
-  name: 'Moai', bpm: 138, scale: 'A minor', chromatic: ['Eb'], loop: true, loopStart: 0, swing: 0.1, gain: 1,
+  name: 'Moai', bpm: 138, scale: 'A minor', chromatic: ['Eb'], loop: true, loopStart: 0, swing: 0.1, gain: 0.64,
   chords: `
     Am7
     Am7
@@ -1448,33 +1446,17 @@ Music.tracks.stage3 = {
     Am7
   `,
   pat: {
-    gT: `
-      kx . x d | s . x m | k . x d | s . x t
-    `,
-    gTc: `
-      kcx . x d | s . x m | k . x d | s . x t
-    `,
-    gT2: `
-      kx . x d | s . x m | k . kx d | s d x t
-    `,
-    fT: `
-      kx . x d | s . x m | k . x d | t m d d
-    `,
-    fT2: `
-      kx . x d | s . x m | k s x d | t m d d
-    `,
-    gB: `
-      kch . h d | sh . h m | kh . h d | sh . h t
-    `,
-    gB2: `
-      kh . h d | sh . h m | kh . kh d | sh . h t
-    `,
-    fB: `
-      kh . h d | sh . h m | k . s . | t m d d
-    `,
+    gT: `kx . x d | s . x m | k . x d | s . x t`,
+    gTc: `kcx . x d | s . x m | k . x d | s . x t`,
+    gT2: `kx . x d | s . x m | k . kx d | s d x t`,
+    fT: `kx . x d | s . x m | k . x d | t m d d`,
+    fT2: `kx . x d | s . x m | k s x d | t m d d`,
+    gB: `kch . h d | sh . h m | kh . h d | sh . h t`,
+    gB2: `kh . h d | sh . h m | kh . kh d | sh . h t`,
+    fB: `kh . h d | sh . h m | k . s . | t m d d`,
   },
   ch: {
-    mar: { w: 'pulse50', vol: 0.35, a: 0.002, d: 0.16, s: 0, r: 0.03, g: 1, lp: 3000, echo: [0.2, 3, 0.3], pan: -0.15, bars: `
+    mar: { w: 'pulse50', vol: 0.3, a: 0.002, d: 0.16, s: 0, r: 0.03, g: 1, lp: 3000, echo: [0.2, 3, 0.3], pan: -0.15, bars: `
         A4 - C5 E5 | - - D5 - | A4 - C5 E5 | - - G5 -
         A4 - C5 E5 | - - D5 - | E5 - D5 C5 | - - A4 -
         G4 - B4 D5 | - - C5 - | G4 - B4 D5 | - - F5 -
@@ -1500,7 +1482,7 @@ Music.tracks.stage3 = {
         G4 - B4 D5 | - - F5 - | G5 - F5 D5 | - - B4 -
         A4 - C5 E5 | - - D5 - | E5 - Eb5 D5 | - - C5 -
       ` },
-    mar2: { w: 'pulse25', vol: 0.3, a: 0.002, d: 0.1, s: 0, r: 0.02, g: 1, lp: 4200, pan: 0.25, bars: `
+    mar2: { w: 'pulse25', vol: 0.22, a: 0.002, d: 0.1, s: 0, r: 0.02, g: 1, lp: 4200, pan: 0.25, bars: `
         . . . . | E5 - - A5 | . . . . | E5 - - A5
         . . . . | E5 - - A5 | . . . . | E5 - - A5
         . . . . | D5 - - G5 | . . . . | D5 - - G5
@@ -1536,7 +1518,7 @@ Music.tracks.stage3 = {
         . . . . | . . . . | . . . . | . . . .
         . . . . | . . . . | . . . . | . . . .
         A5 - - G5 | E5 - - - | . . C5 - | D5 - E5 -
-        G5 - - E5 | D5 - - - | . . C5 - | A4 - - -
+        G5 - - E5 | D5 - - - | . . E5 - | A5 - - -
         C6 - - B5 | G5 - - - | . . E5 - | F5 - G5 -
         A5 - - G5 | E5 - - - | . . C5 - | E5 - - -
         F5 - - E5 | D5 - - - | . . A4 - | C5 - D5 -
@@ -1578,7 +1560,7 @@ Music.tracks.stage3 = {
         . . . . | . . . . | . . . . | . . . .
         . . . . | . . . . | . . . . | . . . .
       ` },
-    bass: { w: 'tri', vol: 0.25, a: 0.003, d: 0.06, s: 0.9, r: 0.03, g: 0.85, bars: `
+    bass: { w: 'tri', vol: 0.22, a: 0.003, d: 0.06, s: 0.9, r: 0.03, g: 0.85, bars: `
         A2 . . A2 | . . A3 . | A2 . . A2 | . . E3 .
         A2 . . A2 | . . A3 . | A2 . . A2 | . . E3 .
         G2 . . G2 | . . G3 . | G2 . . G2 | . . D3 .
@@ -1604,7 +1586,7 @@ Music.tracks.stage3 = {
         G2 . . G2 | . . G3 . | G2 . . G2 | . . D3 .
         A2 . . A2 | . . A3 . | A2 . . A2 | . . E3 .
       ` },
-    drums: { w: 'drums', vol: 0.56, mix: { d: 1.1, m: 1.05, x: 1.1 }, bars: `
+    drums: { w: 'drums', vol: 0.5, bars: `
         @gTc
         @gT
         @gT2
@@ -1630,7 +1612,7 @@ Music.tracks.stage3 = {
 
 // STAGE 4 (Reverse Volcano) -- F# minor + Phrygian b2 (G) + C# dominant (E#), 164 BPM, 24 bars: A gallop riff / B wailing / A' octave-doubled
 Music.tracks.stage4 = {
-  name: 'Reverse Volcano', bpm: 164, scale: 'F# minor', chromatic: ['G', 'F'], loop: true, loopStart: 0, gain: 1,
+  name: 'Reverse Volcano', bpm: 164, scale: 'F# minor', chromatic: ['G', 'F'], loop: true, loopStart: 0, gain: 0.66,
   chords: `
     F#m
     F#m
@@ -1658,27 +1640,13 @@ Music.tracks.stage4 = {
     C#
   `,
   pat: {
-    gA: `
-      kh k . k | sh . h . | kh k h k | sh . h .
-    `,
-    gAc: `
-      kch k . k | sh . h . | kh k h k | sh . h .
-    `,
-    fA: `
-      kh k . k | sh . h . | kh k h k | s s t m
-    `,
-    fA2: `
-      kh k . k | sh . h . | k k s s | t t m d
-    `,
-    gB: `
-      kc . o . | ks . o . | k . o . | ks . o .
-    `,
-    gB2: `
-      k . o . | ks . o . | k . o . | ks . o k
-    `,
-    fB: `
-      k . o . | ks . o . | k k s s | t m d d
-    `,
+    gA: `kh k . k | sh . h . | kh k h k | sh . h .`,
+    gAc: `kch k . k | sh . h . | kh k h k | sh . h .`,
+    fA: `kh k . k | sh . h . | kh k h k | s s t m`,
+    fA2: `kh k . k | sh . h . | k k s s | t t m d`,
+    gB: `kc . o . | ks . o . | k . o . | ks . o .`,
+    gB2: `k . o . | ks . o . | k . o . | ks . o k`,
+    fB: `k . o . | ks . o . | k k s s | t m d d`,
   },
   ch: {
     lead: { w: 'saw', vol: 0.22, a: 0.004, d: 0.2, s: 0.7, r: 0.05, g: 0.93, lp: 3400, vib: [6.5, 22, 0.1], bend: -0.5, echo: [0.12, 3, 0.3], pan: 0.05, bars: `
@@ -1807,7 +1775,7 @@ Music.tracks.stage4 = {
 
 // STAGE 5 (Tentacle) -- C harmonic minor + chromatic slithers (Db E F# Bb), 112 BPM, 16 bars: A (creeping chromatic scales) / B (rising anguish)
 Music.tracks.stage5 = {
-  name: 'Tentacle', bpm: 112, scale: 'C harmonic minor', chromatic: ['Db', 'E', 'F#', 'Bb'], loop: true, loopStart: 0, gain: 1,
+  name: 'Tentacle', bpm: 112, scale: 'C harmonic minor', chromatic: ['Db', 'E', 'F#', 'Bb'], loop: true, loopStart: 0, gain: 1.01,
   chords: `
     Cm
     Cm
@@ -1827,18 +1795,10 @@ Music.tracks.stage5 = {
     G
   `,
   pat: {
-    s1: `
-      d, . . . | . . . . | . . m, . | . . . .
-    `,
-    s2: `
-      . . . . | . . . . | d, . . . | . . x, .
-    `,
-    s3: `
-      d, . . . | . . m, . | d, . . . | . . m, t,
-    `,
-    s4: `
-      d, . . . | . . m, . | d, . m, . | t, . m, d
-    `,
+    s1: `d, . . . | . . . . | . . m, . | . . . .`,
+    s2: `. . . . | . . . . | d, . . . | . . x, .`,
+    s3: `d, . . . | . . m, . | d, . . . | . . m, t,`,
+    s4: `d, . . . | . . m, . | d, . m, . | t, . m, d`,
   },
   ch: {
     lead: { w: 'pulse25', vol: 0.2, a: 0.02, d: 0.3, s: 0.8, r: 0.08, g: 0.98, lp: 2400, port: 0.06, vib: [4.6, 26, 0.12], trem: [5.2, 0.12], echo: [0.2, 6, 0.4], pan: 0.05, bars: `
@@ -1918,7 +1878,7 @@ Music.tracks.stage5 = {
 
 // STAGE 6 (Cell) -- G minor (+F# leading tone), 126 BPM, 16 bars: A (creeping narrow motif) / B (lament: parallel-fifth pad, descending bass G F Eb D)
 Music.tracks.stage6 = {
-  name: 'Cell', bpm: 126, scale: 'G minor', chromatic: ['F#'], loop: true, loopStart: 0, gain: 1,
+  name: 'Cell', bpm: 126, scale: 'G minor', chromatic: ['F#'], loop: true, loopStart: 0, gain: 0.79,
   chords: `
     Gm
     Gm
@@ -1938,21 +1898,11 @@ Music.tracks.stage6 = {
     D7
   `,
   pat: {
-    dA: `
-      k . h, k | h, . h, . | k . h, . | s . h, .
-    `,
-    dA2: `
-      k . h, k | h, . h, . | k . h, k | s . h, .
-    `,
-    dF: `
-      k . h, k | h, . h, . | k . s . | s g s g
-    `,
-    dB: `
-      k . . k | . . h, . | k . . . | s . . h,
-    `,
-    dB2: `
-      k . . k | . . h, . | k . . k | s . . h,
-    `,
+    dA: `k . h, k | h, . h, . | k . h, . | s . h, .`,
+    dA2: `k . h, k | h, . h, . | k . h, k | s . h, .`,
+    dF: `k . h, k | h, . h, . | k . s . | s g s g`,
+    dB: `k . . k | . . h, . | k . . . | s . . h,`,
+    dB2: `k . . k | . . h, . | k . . k | s . . h,`,
   },
   ch: {
     lead: { w: 'pulse25', vol: 0.21, a: 0.012, d: 0.3, s: 0.8, r: 0.07, g: 0.96, lp: 3000, bend: -1, bendT: 0.07, vib: [6.5, 34, 0.1], echo: [0.15, 3, 0.35], pan: 0.05, bars: `
@@ -2024,7 +1974,7 @@ Music.tracks.stage6 = {
 
 // STAGE 7 (Fortress) -- B minor + tritone alarms (F, C, A#), 172 BPM, 24 bars: A alarm / B machine (arps) / A' (+ metallic octave)
 Music.tracks.stage7 = {
-  name: 'Fortress', bpm: 172, scale: 'B minor', chromatic: ['C', 'F', 'A#'], loop: true, loopStart: 0, gain: 1,
+  name: 'Fortress', bpm: 172, scale: 'B minor', chromatic: ['C', 'F', 'A#'], loop: true, loopStart: 0, gain: 0.64,
   chords: `
     Bm
     Bm
@@ -2052,24 +2002,12 @@ Music.tracks.stage7 = {
     F#
   `,
   pat: {
-    dA: `
-      kh h, h h, | sh h, h h, | kh h, h h, | sh h, h h,
-    `,
-    dAc: `
-      kch h, h h, | sh h, h h, | kh h, h h, | sh h, h h,
-    `,
-    dF: `
-      kh h, h h, | sh h, h h, | kh h, h h, | s s s s
-    `,
-    dB: `
-      kx h, x h, | sx h, x h, | kx h, x h, | sx h, x h,
-    `,
-    dBc: `
-      kcx h, x h, | sx h, x h, | kx h, x h, | sx h, x h,
-    `,
-    dBf: `
-      kx h, x h, | sx h, x h, | kx h, x h, | s s s s
-    `,
+    dA: `kh h, h h, | sh h, h h, | kh h, h h, | sh h, h h,`,
+    dAc: `kch h, h h, | sh h, h h, | kh h, h h, | sh h, h h,`,
+    dF: `kh h, h h, | sh h, h h, | kh h, h h, | s s s s`,
+    dB: `kx h, x h, | sx h, x h, | kx h, x h, | sx h, x h,`,
+    dBc: `kcx h, x h, | sx h, x h, | kx h, x h, | sx h, x h,`,
+    dBf: `kx h, x h, | sx h, x h, | kx h, x h, | s s s s`,
   },
   ch: {
     lead: { w: 'pulse12', vol: 0.4, a: 0.002, d: 0.06, s: 0.6, r: 0.02, g: 0.7, pan: 0.05, bars: `
@@ -2192,7 +2130,7 @@ Music.tracks.stage7 = {
 
 // BOSS -- C minor (+B natural leading tone), 168 BPM, 2-bar intro + 16-bar loop: A brass-stab call/response / B soaring arpeggio wails
 Music.tracks.boss = {
-  name: 'Boss', bpm: 168, scale: 'C minor', chromatic: ['B'], loop: true, loopStart: 2, gain: 1,
+  name: 'Boss', bpm: 168, scale: 'C minor', chromatic: ['B'], loop: true, loopStart: 2, gain: 0.79,
   chords: `
     Cm
     G
@@ -2214,30 +2152,14 @@ Music.tracks.boss = {
     G7
   `,
   pat: {
-    i1: `
-      k . . . | k . . . | k . k . | k k k k
-    `,
-    i2: `
-      k . . . | s . . . | k . s . | s s s s
-    `,
-    dA: `
-      kh h, h h, | sh h, h h, | kh h, kh h, | sh h, h h,
-    `,
-    dAc: `
-      kch h, h h, | sh h, h h, | kh h, kh h, | sh h, h h,
-    `,
-    dF: `
-      kh h, h h, | sh h, h h, | kh h, kh h, | s s t m
-    `,
-    dB: `
-      kh h, o h, | sh h, o h, | kh h, o kh, | sh h, o h,
-    `,
-    dBc: `
-      kch h, o h, | sh h, o h, | kh h, o kh, | sh h, o h,
-    `,
-    dBf: `
-      kh h, o h, | sh h, o h, | k k s s | t t m d
-    `,
+    i1: `k . . . | k . . . | k . k . | k k k k`,
+    i2: `k . . . | s . . . | k . s . | s s s s`,
+    dA: `kh h, h h, | sh h, h h, | kh h, kh h, | sh h, h h,`,
+    dAc: `kch h, h h, | sh h, h h, | kh h, kh h, | sh h, h h,`,
+    dF: `kh h, h h, | sh h, h h, | kh h, kh h, | s s t m`,
+    dB: `kh h, o h, | sh h, o h, | kh h, o kh, | sh h, o h,`,
+    dBc: `kch h, o h, | sh h, o h, | kh h, o kh, | sh h, o h,`,
+    dBf: `kh h, o h, | sh h, o h, | k k s s | t t m d`,
   },
   ch: {
     lead: { w: 'saw', vol: 0.26, a: 0.012, d: 0.1, s: 0.65, r: 0.04, g: 0.85, lp: 2700, bend: -0.4, bendT: 0.05, vib: [6, 16, 0.18], pan: 0.05, bars: `
@@ -2340,7 +2262,7 @@ Music.tracks.boss = {
 
 // FINAL BOSS -- D minor (+C# leading tone), 176 BPM, 2-bar intro + 24-bar loop: A climbing sequence (Dm-F-Gm-A) / B lyrical / A' + tremolo strings
 Music.tracks.bossFinal = {
-  name: 'Final Boss', bpm: 176, scale: 'D minor', chromatic: ['C#'], loop: true, loopStart: 2, gain: 1,
+  name: 'Final Boss', bpm: 176, scale: 'D minor', chromatic: ['C#'], loop: true, loopStart: 2, gain: 0.76,
   chords: `
     Dm
     A
@@ -2370,30 +2292,14 @@ Music.tracks.bossFinal = {
     A7
   `,
   pat: {
-    i1: `
-      d d d d | d d d d | m m m m | t t t t
-    `,
-    i2: `
-      k . . . | s . . . | k . s . | s s s s
-    `,
-    dA: `
-      kh h, kh h, | sh h, h k | kh h, kh h, | sh h, k s
-    `,
-    dAc: `
-      kch h, kh h, | sh h, h k | kh h, kh h, | sh h, k s
-    `,
-    dF: `
-      kh h, kh h, | sh h, h k | kh h, kh h, | s s t m
-    `,
-    dB: `
-      kh h, o h, | sh h, o kh, | kh h, o h, | sh h, o kh,
-    `,
-    dBc: `
-      kch h, o h, | sh h, o kh, | kh h, o h, | sh h, o kh,
-    `,
-    dBf: `
-      kh h, o h, | sh h, o kh, | k k s s | t t m d
-    `,
+    i1: `d d d d | d d d d | m m m m | t t t t`,
+    i2: `k . . . | s . . . | k . s . | s s s s`,
+    dA: `kh h, kh h, | sh h, h k | kh h, kh h, | sh h, k s`,
+    dAc: `kch h, kh h, | sh h, h k | kh h, kh h, | sh h, k s`,
+    dF: `kh h, kh h, | sh h, h k | kh h, kh h, | s s t m`,
+    dB: `kh h, o h, | sh h, o kh, | kh h, o h, | sh h, o kh,`,
+    dBc: `kch h, o h, | sh h, o kh, | kh h, o h, | sh h, o kh,`,
+    dBf: `kh h, o h, | sh h, o kh, | k k s s | t t m d`,
   },
   ch: {
     lead: { w: 'saw', vol: 0.24, a: 0.012, d: 0.12, s: 0.65, r: 0.05, g: 0.9, lp: 3000, bend: -0.4, bendT: 0.05, vib: [6.2, 18, 0.16], echo: [0.1, 3, 0.3], pan: 0.05, bars: `
@@ -2559,7 +2465,7 @@ Music.tracks.bossFinal = {
 
 // STAGE CLEAR -- C major fanfare, 132 BPM, 3 bars (~5.5 s), plays once
 Music.tracks.clear = {
-  name: 'Stage Clear', bpm: 132, scale: 'C major', chromatic: [], loop: false, gain: 1, tail: 0.8,
+  name: 'Stage Clear', bpm: 132, scale: 'C major', chromatic: [], loop: false, gain: 0.83, tail: 0.8,
   chords: `
     C
     F G
@@ -2596,7 +2502,7 @@ Music.tracks.clear = {
 
 // GAME OVER -- D minor, 96 BPM, 2 bars (5.0 s), plays once: sighing descent, leading tone C#, low resolved D
 Music.tracks.gameover = {
-  name: 'Game Over', bpm: 96, scale: 'D minor', chromatic: ['C#'], loop: false, gain: 1, tail: 1,
+  name: 'Game Over', bpm: 96, scale: 'D minor', chromatic: ['C#'], loop: false, gain: 0.85, tail: 1,
   chords: `
     Dm Gm
     A Dm
@@ -2623,7 +2529,7 @@ Music.tracks.gameover = {
 
 // ENDING -- F major, 128 BPM, 16 bars (~30 s), plays once: A bright arch motif (bars 1-8) / B calm (9-14) / cadence and held chord (15-16)
 Music.tracks.ending = {
-  name: 'Ending', bpm: 128, scale: 'F major', chromatic: [], loop: false, gain: 1, tail: 1.6,
+  name: 'Ending', bpm: 128, scale: 'F major', chromatic: [], loop: false, gain: 0.79, tail: 1.6,
   chords: `
     F
     C
@@ -2643,21 +2549,11 @@ Music.tracks.ending = {
     F
   `,
   pat: {
-    g1: `
-      kh . h . | sh . h . | kh . h . | sh . h .
-    `,
-    g1c: `
-      kch . h . | sh . h . | kh . h . | sh . h .
-    `,
-    f8: `
-      kh . h . | sh . h . | k . s . | s t m d
-    `,
-    c1: `
-      k, . . . | . . . . | k, . . . | . . . .
-    `,
-    c2: `
-      k, . . . | . . . . | h, . . . | . . . .
-    `,
+    g1: `kh . h . | sh . h . | kh . h . | sh . h .`,
+    g1c: `kch . h . | sh . h . | kh . h . | sh . h .`,
+    f8: `kh . h . | sh . h . | k . s . | s t m d`,
+    c1: `k, . . . | . . . . | k, . . . | . . . .`,
+    c2: `k, . . . | . . . . | h, . . . | . . . .`,
   },
   ch: {
     lead: { w: 'pulse25', vol: 0.23, a: 0.006, d: 0.3, s: 0.8, r: 0.06, g: 0.94, vib: [5.6, 14, 0.16], bend: -0.3, bendT: 0.045, echo: [0.16, 3, 0.32], pan: 0.05, bars: `

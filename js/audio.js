@@ -1,6 +1,6 @@
 'use strict';
 /* ============================================================================
- *  audio.js  --  audio core + procedural sound effects (WebAudio only)
+ *  audio.js  --  audio core + procedural sound effects (WebAudio only, no assets)
  *
  *  Classic script (no modules). Defines the global `Sound`.
  *  Nothing touches WebAudio until Sound.init() is called from a user gesture.
@@ -10,14 +10,36 @@
  *                       +--> master --> compressor --> destination
  *           musicBus --/
  *
- *  SFX are built on demand from oscillators / filtered noise / gain envelopes,
- *  routed through one per-sound voice gain (so a sound can be stolen), and every
- *  node is disconnected when its sources end. At most MAX_VOICES sounds can be
- *  alive at once; each effect also has a minimum re-trigger gap (throttle).
+ *  API
+ *    Sound.init()                  create the context + chain (idempotent, returns true if audio is available);
+ *                                  also starts a track requested earlier through Music.play()
+ *    Sound.resume() / suspend()    ctx.resume()/suspend() (tab hidden/visible, game pause); suspend() waits ~230 ms
+ *                                  after a 'pause' beep; while suspended sound effects are dropped, except 'unpause'.
+ *                                  'unpause', Music.play() and Music.resume() call Sound.wake(), which resumes a context that
+ *                                  suspend() froze unless the page is hidden (a missed Sound.resume() cannot leave the game mute).
+ *    Sound.isSuspended() / wake()
+ *    Sound.setMuted(b) / toggleMute() / muted     30 ms ramp; persisted in localStorage 'lancer.muted'
+ *    Sound.setVolume(v01)  (master, default 0.6) / setMusicVolume(v01) (default 0.5)
+ *    Sound.sfx(name, {slot, pan:-1..1, vol:0..1, pitch:ratio})   play a named effect; returns true if it started
+ *    Sound.tone({type, f0, f1, dur, vol, attack, delay, pan, vibrato:{rate,depth}, shape, lp, seq, step})
+ *    Sound.noise({dur, vol, filter, f0, f1, q, attack, delay, pan, shape})
+ *    Sound.names()  Sound.voiceCount()  Sound.maxVoices (24)  Sound.stats  Sound.ctx/master/comp/sfxBus/musicBus
  *
- *  The SFX builders only need a "voice" object {ctx, out, t0, noise, rnd, pitch}
- *  so the very same code can be rendered into an OfflineAudioContext
- *  (Sound._renderOffline) for testing.
+ *  SFX names: shot laser missile hit deflect explodeS explodeM explodeL explodeXL playerDeath capsule
+ *    power (params.slot 0 SPEED UP, 1 MISSILE, 2 DOUBLE, 3 LASER, 4 OPTION, 5 SHIELD) shieldHit shieldBreak
+ *    enemyShot ring eruption warning coreOpen coreClose bossLaser select start extend pause unpause
+ *    tentacle cellPop electric stomp warp
+ *
+ *  Engineering notes
+ *    - SFX are built on demand from oscillators / filtered noise / gain envelopes and routed through one
+ *      per-sound voice gain, so a sound can be stolen; every node is disconnected when its sources end.
+ *    - At most 24 sounds are alive at once (new sounds steal the oldest lowest-priority voice, or are dropped
+ *      when everything alive outranks them); every effect also has a re-trigger gap (shot: 45 ms).
+ *    - The builders only need a "voice" {ctx, out, t0, noise, rnd, pitch}, so the same code renders into an
+ *      OfflineAudioContext (Sound._renderOffline, used by the tests).
+ *    - Web Audio quirks handled: fresh GainNodes start at 0 (default 1.0 leaks a sample before the envelope),
+ *      and AudioParams get their start value assigned before events (a mid-quantum start otherwise runs the first
+ *      samples at the param default).
  * ========================================================================== */
 const Sound = (function () {
 
@@ -70,7 +92,7 @@ const Sound = (function () {
   }
 
   function loadMuted() {
-    try { return window.localStorage.getItem(LS_MUTED) === '1'; } catch (e) { return false; }
+    try { const v = window.localStorage.getItem(LS_MUTED); return v === '1' || v === 'true'; } catch (e) { return false; }
   }
   function saveMuted(b) {
     try { window.localStorage.setItem(LS_MUTED, b ? '1' : '0'); } catch (e) { /* storage may throw */ }
@@ -321,6 +343,7 @@ const Sound = (function () {
     const hasSeq = !!(o.seq && o.seq.length);
     const f0 = Math.max(1, (hasSeq ? o.seq[0] : num(o.f0, 440)) * pm);
     const fp = osc.frequency;
+    fp.value = f0;                            // initial value first (see note in music.js: mid-quantum start + param default)
     fp.setValueAtTime(f0, t);
     if (hasSeq) {
       const st = num(o.step, 0.03);
@@ -345,6 +368,7 @@ const Sound = (function () {
     if (o.lp) {
       const bq = ctx.createBiquadFilter();
       bq.type = 'lowpass';
+      bq.frequency.value = o.lp;
       bq.frequency.setValueAtTime(o.lp, t);
       if (o.lp1) bq.frequency.exponentialRampToValueAtTime(Math.max(20, o.lp1), end);
       bq.Q.value = num(o.lpq, 0.7);
@@ -353,6 +377,7 @@ const Sound = (function () {
       node = bq;
     }
     const g = ctx.createGain();
+    g.gain.value = 0;                       // a fresh GainNode defaults to 1.0: keep it silent until the envelope starts
     envelope(g.gain, t, dur, vol, o);
     node.connect(g);
     V.nodes.push(g);
@@ -380,6 +405,7 @@ const Sound = (function () {
       const f = ctx.createBiquadFilter();
       f.type = ft;
       const f0 = Math.max(20, num(o.f0, 1000) * pm);
+      f.frequency.value = f0;
       f.frequency.setValueAtTime(f0, t);
       if (o.f1 != null && o.f1 !== o.f0) f.frequency.exponentialRampToValueAtTime(Math.max(20, o.f1 * pm), end);
       f.Q.value = num(o.q, 0.7);
@@ -388,6 +414,7 @@ const Sound = (function () {
       node = f;
     }
     const g = ctx.createGain();
+    g.gain.value = 0;
     envelope(g.gain, t, dur, vol, o);
     node.connect(g);
     V.nodes.push(g);
@@ -672,7 +699,7 @@ const Sound = (function () {
   S.init = function () {
     try {
       if (S.ctx) {
-        if (!userSuspended && S.ctx.state !== 'running') { try { S.ctx.resume().catch(function () {}); } catch (e) { /* ignore */ } }
+        if (!userSuspended && S.ctx.state !== 'running') safeResume(S.ctx);
         flushMusic();
         return true;
       }
@@ -688,16 +715,20 @@ const Sound = (function () {
       S.comp = ch.comp;
       S.sfxBus = ch.sfxBus;
       S.musicBus = ch.musicBus;
-      if (ctx.state === 'suspended') { try { ctx.resume().catch(function () {}); } catch (e) { /* ignore */ } }
+      if (ctx.state === 'suspended') safeResume(ctx);
       flushMusic();
       return true;
     } catch (e) {
-      initFailed = true;
-      S.ctx = null;
+      S.ctx = S.master = S.comp = S.sfxBus = S.musicBus = null;      // allow a retry on a later gesture
       warnOnce('init', 'Sound.init failed', e);
       return false;
     }
   };
+
+  // ctx.resume() returns a promise in modern browsers, undefined in some old ones
+  function safeResume(ctx) {
+    try { const r = ctx.resume(); if (r && r.catch) r.catch(function () {}); } catch (e) { /* ignore */ }
+  }
 
   function flushMusic() {
     try {
@@ -709,7 +740,7 @@ const Sound = (function () {
     try {
       userSuspended = false;
       clearTimeout(suspendTimer);
-      if (S.ctx && S.ctx.state !== 'running') S.ctx.resume().catch(function () {});
+      if (S.ctx && S.ctx.state !== 'running') safeResume(S.ctx);
     } catch (e) { /* ignore */ }
   };
 
@@ -720,10 +751,22 @@ const Sound = (function () {
       clearTimeout(suspendTimer);
       const wait = holdSuspendUntil - performance.now();
       const doIt = function () {
-        try { if (userSuspended && S.ctx && S.ctx.state === 'running') S.ctx.suspend().catch(function () {}); } catch (e) { /* ignore */ }
+        try { if (userSuspended && S.ctx && S.ctx.state === 'running') { const r = S.ctx.suspend(); if (r && r.catch) r.catch(function () {}); } } catch (e) { /* ignore */ }
       };
       // let a just-triggered pause beep finish before the context is frozen
       if (wait > 5) suspendTimer = setTimeout(doIt, wait); else doIt();
+    } catch (e) { /* ignore */ }
+  };
+
+  // True while Sound.suspend() is in force.
+  S.isSuspended = function () { return userSuspended; };
+
+  // Resume audio that suspend() froze, unless the page is hidden. Called implicitly when the game is clearly running again
+  // ('unpause' effect, Music.play(), Music.resume()) so a missed Sound.resume() (e.g. tab hidden while paused) cannot leave
+  // the game silent.
+  S.wake = function () {
+    try {
+      if (userSuspended && !(typeof document !== 'undefined' && document.hidden)) S.resume();
     } catch (e) { /* ignore */ }
   };
 
@@ -760,7 +803,10 @@ const Sound = (function () {
       if (!ctx) return false;
       const def = SFX[name];
       if (!def) { warnOnce('sfx:' + name, 'Sound.sfx: unknown effect "' + name + '"'); return false; }
-      if (userSuspended && !def.wake) return false;
+      if (userSuspended) {
+        if (!def.wake) return false;               // paused/hidden: drop everything except 'unpause'
+        S.wake();                                  // 'unpause': the game is running again (queued if the page is still hidden)
+      }
       const nowMs = performance.now();
       const last = lastAt[name];
       if (last !== undefined && nowMs - last < def.gap) { S.stats.throttled++; return false; }
