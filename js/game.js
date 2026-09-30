@@ -129,6 +129,8 @@ const G = {
   bossT: 0,
   clearT: 0,
   banner: null,
+  toastMsg: '',
+  toastT: 0,
   shake: 0,
   flash: 0,
   rank: 0,
@@ -231,8 +233,11 @@ const G = {
   step() {
     Input.update();
     if (Input.pressed.mute) {
-      try { if (typeof Sound !== 'undefined') Sound.toggleMute(); } catch (e) { /* ignore */ }
+      try {
+        if (typeof Sound !== 'undefined') this.toast(Sound.toggleMute() ? 'SOUND OFF' : 'SOUND ON');
+      } catch (e) { /* ignore */ }
     }
+    if (this.toastT > 0) this.toastT--;
     this.frame++;
     this.modeT++;
     MODES[this.mode].update.call(this);
@@ -242,6 +247,16 @@ const G = {
     const c = this.ctx;
     c.imageSmoothingEnabled = false;
     MODES[this.mode].draw.call(this, c);
+    if (this.toastT > 0) {
+      c.globalAlpha = Math.min(1, this.toastT / 20);
+      PixFont.text(c, this.toastMsg, W - 6, 14, { align: 'right', color: '#ffffff', shadow: '#000' });
+      c.globalAlpha = 1;
+    }
+  },
+
+  toast(msg) {
+    this.toastMsg = msg;
+    this.toastT = 90;
   },
 
   /* ================= helpers for stages / enemies ================= */
@@ -803,6 +818,7 @@ const G = {
     if (!P.alive) return;
     const T = this.terrain, camX = this.camX;
     if (!this.god && P.enterT <= 0 && T.rect(camX + P.x - 7, P.y - 3, 14, 6)) {
+      this.lastHit = { kind: 'terrain', name: 'terrain', camX };
       P.die();
       return;
     }
@@ -810,13 +826,14 @@ const G = {
     const shieldOn = P.shield > 0;
     for (const b of this.eb) {
       if (b.dead || b.harmless) continue;
-      if (shieldOn && P.shield > 0 && overlap(P.x + 18, P.y, 8, 22, b.x, b.y, b.w, b.h)) {
+      if (shieldOn && P.shield > 0 && overlap(P.x + 18, P.y, 9, 25, b.x, b.y, b.w, b.h)) {
         b.dead = true;
         P.absorbShield();
         continue;
       }
       if (overlap(P.x, P.y, 8, 4, b.x, b.y, b.w, b.h)) {
         b.dead = true;
+        this.lastHit = { kind: 'bullet', name: b.spr, camX: this.camX };
         P.hit();
         if (!P.alive) return;
       }
@@ -828,17 +845,19 @@ const G = {
         for (const p of e.parts) {
           if (p.dead || p.harmless) continue;
           if (overlap(P.x, P.y, 9, 5, e.x + p.ox, e.y + p.oy, p.w, p.h)) {
+            this.lastHit = { kind: 'enemy', name: e.type + '.' + (p.name || ''), camX: this.camX };
             P.hit();
             if (!P.alive) return;
           }
         }
       } else {
-        if (shieldOn && P.shield > 0 && !e.invuln && overlap(P.x + 18, P.y, 8, 22, e.x + e.hx, e.y + e.hy, e.w, e.h)) {
+        if (shieldOn && P.shield > 0 && !e.invuln && overlap(P.x + 18, P.y, 9, 25, e.x + e.hx, e.y + e.hy, e.w, e.h)) {
           P.absorbShield();
           this.hurt(e, 3, null);
           continue;
         }
         if (overlap(P.x, P.y, 9, 5, e.x + e.hx, e.y + e.hy, e.w, e.h)) {
+          this.lastHit = { kind: 'enemy', name: e.type, camX: this.camX };
           P.hit();
           if (!P.alive) return;
         }
@@ -1098,8 +1117,8 @@ const MODES = {
       if (((t / 30) | 0) % 2 === 0) PixFont.text(c, 'PRESS START', W / 2, 140, { align: 'center', scale: 2, color: '#ffffff', outline: '#000' });
       PixFont.text(c, '< ' + this.diff.name + ' >', W / 2, 164, { align: 'center', color: '#ffe646', shadow: '#000' });
       PixFont.text(c, 'HI ' + this.pad(this.hi, 7), W / 2, 192, { align: 'center', color: '#ffffff', shadow: '#000' });
-      PixFont.text(c, 'ARROWS:MOVE  Z:SHOT  X:POWER UP', W / 2, 206, { align: 'center', font: '3x5', color: '#8090c8' });
-      PixFont.text(c, 'P:PAUSE  M:MUTE  ENTER:START', W / 2, 213, { align: 'center', font: '3x5', color: '#8090c8' });
+      PixFont.text(c, 'ARROWS/WASD:MOVE  Z/SPACE:SHOT  X/SHIFT:POWER UP', W / 2, 203, { align: 'center', font: '3x5', color: '#8090c8' });
+      PixFont.text(c, 'P:PAUSE  M:MUTE  F:FULLSCREEN  ENTER OR CLICK:START', W / 2, 211, { align: 'center', font: '3x5', color: '#8090c8' });
     },
   },
 
@@ -1165,7 +1184,7 @@ const MODES = {
         this.mode = 'play';
         this.modeT = 0;
       }
-      if (Input.pressed.back && Input.held.down) this.setMode('title');
+      if (Input.pressed.quit) this.setMode('title');
     },
     draw(c) {
       this.drawWorld(c);
@@ -1174,6 +1193,7 @@ const MODES = {
       c.fillRect(0, 0, W, H);
       PixFont.text(c, 'PAUSE', W / 2, 92, { align: 'center', scale: 3, color: '#ffffff', outline: '#102060' });
       PixFont.text(c, 'P / ENTER : RESUME', W / 2, 124, { align: 'center', color: '#ffe646', shadow: '#000' });
+      PixFont.text(c, 'Q : QUIT TO TITLE', W / 2, 138, { align: 'center', color: '#9eb4ff', shadow: '#000' });
     },
   },
 
@@ -1221,6 +1241,10 @@ const MODES = {
       ]);
     },
     update() {
+      if (this.modeT > 60 && Input.pressed.back) {
+        this.setMode('title');
+        return;
+      }
       if (this.modeT > 300 && Input.pressed.start) {
         // second loop: harder
         this.loop++;
@@ -1239,7 +1263,8 @@ const MODES = {
       if (this.continues) PixFont.text(c, 'CONTINUES ' + this.continues, W / 2, y + 100, { align: 'center', color: '#ff8080', shadow: '#000' });
       Sprites.draw(c, 'flame', 100 + ((this.frame * 0.6) % 180) - 17, 170, { frame: (this.frame >> 1) & 1 });
       Sprites.draw(c, 'ship', 100 + ((this.frame * 0.6) % 180), 170, { frame: 0 });
-      if (this.modeT > 300 && ((this.modeT / 30) | 0) % 2 === 0) PixFont.text(c, 'PRESS START : NEXT LOOP', W / 2, 200, { align: 'center', color: '#ffffff', shadow: '#000' });
+      if (this.modeT > 300 && ((this.modeT / 30) | 0) % 2 === 0) PixFont.text(c, 'PRESS START : NEXT LOOP', W / 2, 198, { align: 'center', color: '#ffffff', shadow: '#000' });
+      if (this.modeT > 300) PixFont.text(c, 'ESC : TITLE', W / 2, 210, { align: 'center', font: '3x5', color: '#8090c8' });
     },
   },
 };

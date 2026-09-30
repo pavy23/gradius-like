@@ -76,14 +76,14 @@
     d.px(3, 4, 'w');
   });
 
-  // shield (front bracket)
-  S.painted('shield', 8, 21, 2, (d, f) => {
-    const col = f ? 'w' : 'c';
-    for (let y = 0; y < 21; y++) {
-      const t = (y - 10) / 10;
-      const x = Math.round(5 - Math.sqrt(Math.max(0, 1 - t * t)) * 5);
-      d.px(7 - x, y, col);
-      d.px(6 - x, y, 'C');
+  // shield (front bracket, convex toward the nose)
+  S.painted('shield', 10, 25, 2, (d, f) => {
+    for (let y = 0; y < 25; y++) {
+      const t = (y - 12) / 12;
+      const x = Math.round(7 * (1 - Math.sqrt(Math.max(0, 1 - t * t))));
+      d.px(9 - x, y, f ? 'w' : 'c');
+      d.px(8 - x, y, f ? 'c' : 'C');
+      if (y % 2 === f) d.px(7 - x, y, 'B');
     }
   });
 

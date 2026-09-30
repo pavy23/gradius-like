@@ -191,7 +191,7 @@ class Player {
     for (const s of src) {
       if (this.laser) {
         if (G.countPB('laser') < 3 * src.length) {
-          G.pbullet({ kind: 'laser', x: s.x + 18, y: s.y, vx: 8, w: 30, h: 3, dmg: 2, pierce: true });
+          G.pbullet({ kind: 'laser', x: s.x + 18, y: s.y, vx: 8, w: 30, h: 3, dmg: 1.4, pierce: true });
           n++;
         }
       } else {

@@ -19,13 +19,14 @@ const BC_PALS = [
   { hi: '#f8d0d0', mid: '#c05a6a', dark: '#661c30', acc: '#ffe646', acc2: '#ff9424' }, // crimson
 ];
 
+// HP tuned so that a basic ship needs ~35-55 s, a typical mid-power ship ~15 s and a fully powered ship ~7 s.
 const BC_CFG = [
   null,
-  { plateHp: 6, coreHp: 34, laserEvery: 150, volleys: 1, orbEvery: 0, openT: 420, closedT: 110, speed: 0.55 },
-  { plateHp: 7, coreHp: 42, laserEvery: 135, volleys: 2, orbEvery: 110, openT: 420, closedT: 100, speed: 0.6 },
-  { plateHp: 8, coreHp: 50, laserEvery: 125, volleys: 2, orbEvery: 90, openT: 400, closedT: 100, speed: 0.65 },
-  { plateHp: 9, coreHp: 58, laserEvery: 115, volleys: 3, orbEvery: 80, openT: 400, closedT: 90, speed: 0.7 },
-  { plateHp: 10, coreHp: 66, laserEvery: 105, volleys: 3, orbEvery: 70, openT: 380, closedT: 90, speed: 0.8 },
+  { plateHp: 14, coreHp: 190, laserEvery: 150, volleys: 1, orbEvery: 0, openT: 360, closedT: 100, speed: 0.55 },
+  { plateHp: 16, coreHp: 215, laserEvery: 135, volleys: 2, orbEvery: 110, openT: 360, closedT: 100, speed: 0.6 },
+  { plateHp: 18, coreHp: 240, laserEvery: 125, volleys: 2, orbEvery: 90, openT: 350, closedT: 95, speed: 0.65 },
+  { plateHp: 20, coreHp: 265, laserEvery: 115, volleys: 3, orbEvery: 80, openT: 350, closedT: 90, speed: 0.7 },
+  { plateHp: 22, coreHp: 290, laserEvery: 105, volleys: 3, orbEvery: 70, openT: 340, closedT: 90, speed: 0.8 },
 ];
 
 function bakeBigCoreArt() {
