@@ -59,6 +59,14 @@ class Player {
     return 1.15 + this.speedLv * 0.48;
   }
 
+  /**
+   * Top speed (pixels per step) when the ship follows a finger. A dragging thumb is far less precise than a d-pad, so this
+   * is faster than speed(), but it still grows with SPEED UP so the power-up keeps its value on touch screens.
+   */
+  dragSpeed() {
+    return 2.6 + this.speedLv * 0.7;
+  }
+
   /* ---------- power meter ---------- */
   canUse(slot) {
     switch (slot) {
@@ -116,6 +124,7 @@ class Player {
     this.animT++;
     if (!this.alive) {
       this.deadT++;
+      Input.clearDrag();
       return;
     }
     if (this.inv > 0) this.inv--;
@@ -123,12 +132,14 @@ class Player {
 
     let dx = 0, dy = 0;
     if (this.auto) {
+      Input.clearDrag();
       dx = this.auto.vx;
       dy = this.auto.vy;
       this.x += dx;
       this.y += dy;
     } else if (this.enterT > 0) {
       // fly in from the left edge
+      Input.clearDrag();
       this.enterT--;
       this.x += (44 - this.x) * 0.08 + 0.4;
       dx = 1;
@@ -140,10 +151,12 @@ class Player {
         ix *= 0.7071;
         iy *= 0.7071;
       }
-      this.x = clamp(this.x + ix * s, 14, W - 14);
-      this.y = clamp(this.y + iy * s, 9, H - 22);
-      dx = ix;
-      dy = iy;
+      // touch: the finger moves the ship relative to where it is (see js/touch.js), at up to dragSpeed() per step
+      const [mx, my] = Input.takeDrag(this.dragSpeed());
+      this.x = clamp(this.x + ix * s + mx, 14, W - 14);
+      this.y = clamp(this.y + iy * s + my, 9, H - 22);
+      dx = ix + (Math.abs(mx) > 0.25 ? mx / s : 0);
+      dy = iy + (Math.abs(my) > 0.25 ? my / s : 0);
     }
     // bank animation: tilt while moving vertically
     const target = dy < -0.1 ? 1 : dy > 0.1 ? -1 : 0;
@@ -164,7 +177,7 @@ class Player {
     // ---- weapons ----
     if (this.fireCd > 0) this.fireCd--;
     if (this.missCd > 0) this.missCd--;
-    if (inp.fire) {
+    if (inp.fire || G.autoShot) {
       if (this.fireCd <= 0) {
         this.fireMain();
         this.fireCd = this.laser ? 11 : 7;
