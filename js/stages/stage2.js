@@ -1285,6 +1285,25 @@
     },
   };
 
+  /** a sprite frame tinted towards a colour (cached; keeps the silhouette) */
+  const s2_tintCache = {};
+  function s2_tinted(name, frame, col) {
+    const key = name + '|' + frame + '|' + col;
+    let c = s2_tintCache[key];
+    if (!c) {
+      const src = Sprites.get(name, frame);
+      c = Sprites.makeCanvas(src.width, src.height);
+      const g = c.getContext('2d');
+      g.drawImage(src, 0, 0);
+      g.globalCompositeOperation = 'source-atop';
+      g.globalAlpha = 0.6;
+      g.fillStyle = col;
+      g.fillRect(0, 0, c.width, c.height);
+      s2_tintCache[key] = c;
+    }
+    return c;
+  }
+
   /* ---- mid-boss: the Hive Queen ----
    * head (stinger fan)  core (thorax, kills her)  abdomen (brood ring)
    * Once her head is gone she goes berserk and charges across the screen.
@@ -1384,8 +1403,10 @@
     draw(e, c) {
       const fr = (e.t >> 2) & 1;
       // the wind-up blinks red so the charge is unmistakable
-      const warn = e.mode === 'windup' && (e.wt >> 2) & 1;
-      Sprites.draw(c, 's2_queen', e.x, e.y, { frame: fr, flash: !!warn });
+      if (e.mode === 'windup' && (e.wt >> 2) & 1) {
+        const img = s2_tinted('s2_queen', fr, '#ff2a3a');
+        c.drawImage(img, Math.round(e.x - img.width / 2), Math.round(e.y - img.height / 2));
+      } else Sprites.draw(c, 's2_queen', e.x, e.y, { frame: fr });
       // hit flash only over the part that was hit
       for (const p of e.parts) {
         if (p.dead || !(p.flash > 0)) continue;
