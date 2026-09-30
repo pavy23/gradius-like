@@ -58,8 +58,8 @@ const Sound = (function () {
     sfxBus: null,
     musicBus: null,
     muted: false,
-    volume: 0.6,
-    musicVolume: 0.5,
+    volume: 1.0,
+    musicVolume: 0.8,
     maxVoices: MAX_VOICES,
     stats: { played: 0, throttled: 0, dropped: 0, stolen: 0, peakVoices: 0, errors: 0 }
   };
@@ -143,6 +143,13 @@ const Sound = (function () {
     comp.ratio.value = 6;
     comp.attack.value = 0.003;
     comp.release.value = 0.2;
+    // final safety limiter: with a hot mix the compressor alone can still let peaks through
+    const limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -3;
+    limiter.knee.value = 0;
+    limiter.ratio.value = 20;
+    limiter.attack.value = 0.001;
+    limiter.release.value = 0.08;
     const sfxBus = ctx.createGain();
     sfxBus.gain.value = 1;
     const musicBus = ctx.createGain();
@@ -150,8 +157,9 @@ const Sound = (function () {
     sfxBus.connect(master);
     musicBus.connect(master);
     master.connect(comp);
-    comp.connect(dest);
-    return { master: master, comp: comp, sfxBus: sfxBus, musicBus: musicBus };
+    comp.connect(limiter);
+    limiter.connect(dest);
+    return { master: master, comp: comp, limiter: limiter, sfxBus: sfxBus, musicBus: musicBus };
   }
 
   function applyMaster() {
@@ -695,6 +703,14 @@ const Sound = (function () {
     } }
   };
 
+  // ------------------------------------------------------------------ loudness trims
+  // Effect gains were originally balanced in isolation; measured through the real master chain the very frequent
+  // ones (shot, enemyShot, hit ...) came out 40+ dB below the music and were inaudible in play. These trims (dB) bring
+  // every effect to an audible level while the big explosions stay where they were (the limiter protects the peaks).
+  const TRIM_DB = { shot: 22, laser: 18, hit: 20, deflect: 16, explodeS: 8, explodeM: 4, power: 12, shieldHit: 17,
+                    enemyShot: 17, tentacle: 6, cellPop: 3, stomp: 8, select: 13 };
+  Object.keys(TRIM_DB).forEach(function (k) { if (SFX[k]) SFX[k].g = (SFX[k].g || 1) * Math.pow(10, TRIM_DB[k] / 20); });
+
   // ------------------------------------------------------------------ public API
   S.init = function () {
     try {
@@ -713,13 +729,14 @@ const Sound = (function () {
       S.ctx = ctx;
       S.master = ch.master;
       S.comp = ch.comp;
+      S.limiter = ch.limiter;
       S.sfxBus = ch.sfxBus;
       S.musicBus = ch.musicBus;
       if (ctx.state === 'suspended') safeResume(ctx);
       flushMusic();
       return true;
     } catch (e) {
-      S.ctx = S.master = S.comp = S.sfxBus = S.musicBus = null;      // allow a retry on a later gesture
+      S.ctx = S.master = S.comp = S.limiter = S.sfxBus = S.musicBus = null;      // allow a retry on a later gesture
       warnOnce('init', 'Sound.init failed', e);
       return false;
     }

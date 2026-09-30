@@ -50,6 +50,11 @@
       Input.setVirtual('down', dy > T);
     };
     zone.addEventListener('pointerdown', (e) => {
+      // on menus (title / game over / ending / pause) a tap anywhere means START
+      if (typeof G !== 'undefined' && G.mode !== 'play' && G.mode !== 'intro') {
+        Input.setVirtual('start', true);
+        setTimeout(() => Input.setVirtual('start', false), 90);
+      }
       if (pid !== null) return;
       pid = e.pointerId;
       zone.setPointerCapture(pid);

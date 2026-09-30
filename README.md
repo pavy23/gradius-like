@@ -22,8 +22,13 @@ Gradius 스타일의 **도트 그래픽 횡스크롤 슈팅 게임**입니다. �
 | 단일 파일 | `node tools/bundle.js` → `dist/nova-lancer.html` 한 파일로 배포 가능 |
 | GitHub Pages | 저장소 Settings → Pages → *Deploy from a branch* → 브랜치 / `(root)` 선택 |
 
-권장: 최신 Chrome / Edge / Firefox / Safari (테스트는 Chromium 기준). 소리는 첫 키 입력/클릭 이후에 켜집니다(브라우저 정책).
+권장: 최신 Chrome / Edge / Firefox / Safari (테스트는 Chromium 기준).
 게임 화면을 한 번 클릭하면 키보드 입력이 활성화됩니다(iframe 안에서도 동일).
+
+**소리가 안 나올 때**: 브라우저 정책상 소리는 *첫 클릭/키 입력 이후*에만 켜집니다. 타이틀 화면 아래쪽 줄이
+`CLICK OR PRESS ANY KEY TO ENABLE SOUND`이면 아직 잠겨 있는 것이고, 클릭하면 `SOUND ON`으로 바뀝니다.
+`M` 키로 음소거 상태(`SOUND OFF`)인지, 브라우저 탭이 음소거되어 있지 않은지, 기기 음량이 0이 아닌지도 확인하세요.
+미리보기(iframe) 창에서 계속 무음이면 새 탭이나 로컬 `index.html`로 열어 보세요.
 
 ## 조작
 

@@ -133,6 +133,9 @@ const G = {
   toastMsg: '',
   toastT: 0,
   reduceFlash: false,
+  audioAnnounced: false,
+  silentKick: false,
+  fromTitle: false,
   shake: 0,
   flash: 0,
   rank: 0,
@@ -171,11 +174,32 @@ const G = {
     if (q.get('stage')) this.startStage = clamp((parseInt(q.get('stage'), 10) || 1) - 1, 0, STAGES.length - 1);
     this.q = q;
 
-    const unlock = () => {
-      try { if (typeof Sound !== 'undefined') Sound.init(); } catch (e) { /* ignore */ }
+    // Web Audio has to be created / resumed inside a *user activation*. Which events count differs by browser and
+    // input device (mouse: pointerdown; touch: pointerup/touchend; Safari: click/mouseup; iOS also wants a sound to be
+    // started inside the gesture), so keep trying on every kind of input until the context is really running.
+    const unlockAudio = () => {
+      try {
+        if (typeof Sound === 'undefined') return;
+        if (this.silentKick && Sound.ctx && Sound.ctx.state === 'running') return; // already unlocked
+        Sound.init();
+        const ctx = Sound.ctx;
+        if (!ctx) return;
+        if (ctx.state !== 'running') {
+          const r = ctx.resume();
+          if (r && r.catch) r.catch(() => {});
+        }
+        if (!this.silentKick) {
+          this.silentKick = true;
+          const src = ctx.createBufferSource();
+          src.buffer = ctx.createBuffer(1, 1, 22050);
+          src.connect(ctx.destination);
+          src.start(0);
+        }
+      } catch (e) { /* audio must never break the game */ }
     };
-    window.addEventListener('keydown', unlock);
-    window.addEventListener('pointerdown', unlock);
+    for (const ev of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'touchstart', 'touchend', 'keydown', 'keyup']) {
+      window.addEventListener(ev, unlockAudio, true);
+    }
     // auto-pause when the window loses focus (real play only, not in scripted tests)
     window.addEventListener('blur', () => {
       if (!(q.get('manual') === '1') && this.mode === 'play') this.setMode('paused');
@@ -248,6 +272,10 @@ const G = {
       this.reduceFlash = !this.reduceFlash;
       Store.set('nova.noflash', this.reduceFlash ? '1' : '0');
       this.toast(this.reduceFlash ? 'FLASH EFFECTS OFF' : 'FLASH EFFECTS ON');
+    }
+    if (!this.audioAnnounced && typeof Sound !== 'undefined' && Sound.ctx && Sound.ctx.state === 'running') {
+      this.audioAnnounced = true;
+      if (!Sound.muted) this.toast('SOUND ON');
     }
     if (this.toastT > 0) this.toastT--;
     this.frame++;
@@ -574,6 +602,7 @@ const G = {
     this.player.resetAll();
     this.keepUpgrades = false;
     Store.set('nova.diff', this.diffKey);
+    this.fromTitle = true;
     this.setMode('intro', this.startStage || 0);
   },
 
@@ -994,6 +1023,23 @@ const G = {
     }
   },
 
+  /** one line telling the player whether sound is on (and how to get it when the browser blocks it) */
+  drawSoundStatus(c, y) {
+    if (typeof Sound === 'undefined') return;
+    let label, col;
+    if (Sound.muted) {
+      label = 'SOUND OFF   M: TURN ON';
+      col = '#ff8a8a';
+    } else if (Sound.ctx && Sound.ctx.state === 'running') {
+      label = 'SOUND ON   M: MUTE';
+      col = '#8cd8ff';
+    } else {
+      label = 'CLICK OR PRESS ANY KEY TO ENABLE SOUND';
+      col = ((this.frame / 20) | 0) % 2 === 0 ? '#ffe646' : '#ffffff'; // always visible, just pulses
+    }
+    if (label) PixFont.text(c, label, W / 2, y, { align: 'center', font: '3x5', color: col });
+  },
+
   pad(n, w) {
     let s = String(Math.max(0, Math.floor(n)));
     while (s.length < w) s = '0' + s;
@@ -1149,8 +1195,9 @@ const MODES = {
         PixFont.text(c, 'STAGE ' + st.id + '  ' + st.name, W / 2, 166, { align: 'center', color: '#8cd8ff', shadow: '#000' });
         PixFont.text(c, 'UP/DOWN: STAGE   LEFT/RIGHT: LEVEL', W / 2, 176, { align: 'center', font: '3x5', color: '#8090c8' });
       }
-      PixFont.text(c, 'HI ' + this.pad(this.hi, 7), W / 2, 188, { align: 'center', color: '#ffffff', shadow: '#000' });
-      PixFont.text(c, 'ARROWS/WASD:MOVE  Z/SPACE:SHOT  X/SHIFT:POWER UP', W / 2, 203, { align: 'center', font: '3x5', color: '#8090c8' });
+      PixFont.text(c, 'HI ' + this.pad(this.hi, 7), W / 2, 187, { align: 'center', color: '#ffffff', shadow: '#000' });
+      this.drawSoundStatus(c, 197);
+      PixFont.text(c, 'ARROWS/WASD:MOVE  Z/SPACE:SHOT  X/SHIFT:POWER UP', W / 2, 204, { align: 'center', font: '3x5', color: '#8090c8' });
       PixFont.text(c, 'P:PAUSE  M:MUTE  F:FULLSCREEN  V:FLASH  ENTER/CLICK:START', W / 2, 211, { align: 'center', font: '3x5', color: '#8090c8' });
     },
   },
@@ -1160,7 +1207,8 @@ const MODES = {
     enter(idx) {
       this.pendingStage = idx;
       this.built = false;
-      bgm.stop(0.3);
+      if (!this.fromTitle) bgm.stop(0.3); // from the title screen the theme keeps playing until the stage music starts
+      this.fromTitle = false;
     },
     update() {
       if (this.modeT === 3 && !this.built) {
@@ -1227,6 +1275,7 @@ const MODES = {
       PixFont.text(c, 'PAUSE', W / 2, 92, { align: 'center', scale: 3, color: '#ffffff', outline: '#102060' });
       PixFont.text(c, 'P / ENTER : RESUME', W / 2, 124, { align: 'center', color: '#ffe646', shadow: '#000' });
       PixFont.text(c, 'Q : QUIT TO TITLE', W / 2, 138, { align: 'center', color: '#9eb4ff', shadow: '#000' });
+      this.drawSoundStatus(c, 154);
     },
   },
 
