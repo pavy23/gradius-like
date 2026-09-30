@@ -51,8 +51,9 @@ class StageBuilder {
     const gap = o.gap || 10;
     return this._add(x, () => {
       for (let i = 0; i < n; i++) {
-        const carry = o.carry === 'last' ? i === n - 1 : o.carry === 'first' ? i === 0 : o.carry === 'all' ? true : o.carry === i;
+        let carry = o.carry === 'last' ? i === n - 1 : o.carry === 'first' ? i === 0 : o.carry === 'all' ? true : o.carry === i;
         const extra = o.each ? o.each(i) || {} : {};
+        if (extra.carry !== undefined) carry = !!extra.carry; // each(i) may decide per member
         const opt = Object.assign({}, o, extra, {
           y: extra.y !== undefined ? extra.y : (o.y === undefined ? 100 : o.y) + i * (o.dy || 0),
           carry,
@@ -371,7 +372,7 @@ const G = {
 
   /** enemy bullet. o: {spr,w,h,hp,ax,ay,solid,anim,raw,life} */
   ebullet(x, y, vx, vy, o = {}) {
-    if (this.eb.length > 64) return null;
+    if (this.eb.length > 90) return null; // safety cap: keeps the screen readable and the frame time bounded
     const k = o.raw ? 1 : this.bulletMul();
     const b = {
       x, y, vx: vx * k, vy: vy * k, ax: (o.ax || 0) * k, ay: (o.ay || 0) * k,

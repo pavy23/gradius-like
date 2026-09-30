@@ -65,10 +65,12 @@
    * ============================================================= */
   // [x, centre y, free gap]
   const S6_PASS = [
-    [0, 112, 156], [260, 110, 150], [480, 104, 138], [700, 108, 130], [900, 114, 132], [1100, 112, 134],
-    [1260, 100, 126], [1420, 90, 124], [1580, 96, 124], [1720, 114, 128], [1900, 128, 126], [2060, 118, 126],
-    [2200, 98, 128], [2300, 106, 152], [2380, 110, 172], [2560, 108, 176], [2700, 112, 146], [2820, 104, 130],
-    [2960, 100, 128], [3080, 112, 130], [3220, 126, 128], [3380, 112, 136], [3540, 112, 156], [3640, 112, 164], [S6_LEN, 112, 164],
+    [0, 112, 156], [260, 110, 150], [480, 104, 138], [600, 96, 134], [720, 108, 130], [820, 124, 132],
+    [900, 114, 132], [1000, 100, 134], [1100, 118, 134], [1180, 106, 130], [1290, 92, 126], [1380, 112, 126],
+    [1470, 100, 124], [1560, 122, 124], [1640, 108, 128], [1740, 92, 128], [1850, 124, 126], [1980, 118, 126],
+    [2080, 98, 126], [2170, 122, 128], [2262, 104, 134], [2330, 106, 152], [2380, 110, 172], [2560, 108, 176],
+    [2700, 112, 146], [2820, 104, 130], [2960, 100, 128], [3080, 112, 130], [3220, 126, 128], [3360, 112, 136],
+    [3540, 112, 156], [3640, 112, 164], [S6_LEN, 112, 164],
   ];
   // the passage pinches where a cell wall stands: [world x, extra narrowing]
   const S6_WALL_X = [[720, 6], [1180, 6], [1470, 8], [1980, 10], [2262, 12], [2690, 14], [2742, 14], [2990, 6], [3200, 4], [3312, 10]];
@@ -386,6 +388,8 @@
    * ============================================================= */
   const S6_BODY_N = 100;
   const S6_BODY_R = 43;
+  const S6_RIM_N = 360;
+  const S6_RIM = []; // per wobble frame: membrane radius for every angle (roots of the cilia)
   function s6BakeBossBody() {
     const N = S6_BODY_N, C = (N - 1) / 2, R = S6_BODY_R, NA = 360;
     const rgb = Terrain.rgb32;
@@ -415,9 +419,10 @@
       const a = rng() * TAU, r = 8 + rng() * 30;
       grains.push([Math.round(C + Math.cos(a) * r), Math.round(C + Math.sin(a) * r), rng() < 0.5 ? 0 : 1]);
     }
-    const RM = new Float32Array(NA);
     const frames = [];
     for (let f = 0; f < 16; f++) {
+      const RM = new Float32Array(NA);
+      S6_RIM.push(RM);
       const ph = (f / 16) * TAU;
       for (let k = 0; k < NA; k++) {
         const th = ((k + 0.5) / NA) * TAU - Math.PI;
@@ -950,7 +955,7 @@
     },
     draw(e, c) {
       const dv = e.dv;
-      const blinking = dv && dv.st === 1 && ((dv.t >> (dv.t > dv.warn * 0.55 ? 1 : 2)) & 1) === 0;
+      const blinking = dv && dv.st === 1 && (G.reduceFlash || ((dv.t >> (dv.t > dv.warn * 0.55 ? 1 : 2)) & 1) === 0);
       const D = s6CellSize(e.sz * e.grow);
       const pre = blinking ? 's6_cellb' : e.carry ? 's6_cellc' : 's6_cell';
       if (dv && dv.st === 1) {
@@ -1318,11 +1323,11 @@
       e.x = e.homeX + Math.sin(e.pt * 0.021 * e.spd) * 4;
 
       /* ---- state machine ---- */
-      const closedT = e.rage ? 150 : 215;
+      const closedT = (e.closedT = e.rage ? 150 : 215);
       const openT = e.rage ? 300 : 340;
       if (e.st === 'closed') {
         if (e.open > 0) e.open = Math.max(0, e.open - 0.12);
-        if (e.pt >= closedT) { e.st = 'opening'; e.pt = 0; sfx('coreOpen'); }
+        if (e.pt >= closedT) { e.st = 'opening'; e.pt = 0; e.charge = 0; sfx('coreOpen'); }
       } else if (e.st === 'opening') {
         e.open = Math.min(3, e.open + 3 / 44);
         if (e.pt >= 44) {
@@ -1397,7 +1402,7 @@
           }
           if (e.rage) G.later(22, () => { if (!e.dead && G.player.alive) for (let i = 0; i < n; i++) { const a = ph + Math.PI / n + (i * TAU) / n; G.ebullet(e.x + Math.cos(a) * 30, e.y + Math.sin(a) * 30, Math.cos(a) * 1.2, Math.sin(a) * 1.2, { spr: 'ebulletL', w: 6, h: 6, anim: 8, quiet: i > 0 }); } });
         }
-      } else if (e.st === 'closed' && --e.burstCd <= 0) {
+      } else if (e.st === 'closed' && --e.burstCd <= 0 && e.pt < e.closedT - 46) { // no new burst right before the maw opens
         e.charge = 24;
         e.burstCd = G.fireDelay(e.rage ? 92 : 112);
       }
@@ -1482,8 +1487,8 @@
     },
     drawWreck(e, c, f) {
       const jx = rndi(-1, 1), jy = rndi(-1, 1);
-      Sprites.draw(c, 's6_nuc_body', f.x + jx, f.y + jy, { frame: (f.t >> 1) & 15, flash: (f.t >> 2) % 5 === 0 });
-      Sprites.draw(c, 's6_nuc_dim', f.x - 14 + jx, f.y + jy, { flash: (f.t >> 2) % 3 === 0 });
+      Sprites.draw(c, 's6_nuc_body', f.x + jx, f.y + jy, { frame: (f.t >> 1) & 15, flash: !G.reduceFlash && (f.t >> 2) % 5 === 0 });
+      Sprites.draw(c, 's6_nuc_dim', f.x - 14 + jx, f.y + jy, { flash: !G.reduceFlash && (f.t >> 2) % 3 === 0 });
       Sprites.draw(c, 's6_maw3', f.x - 29 + jx, f.y + jy);
       // the cell slowly deflates into a dark husk
       c.globalAlpha = 0.55 * Math.min(1, f.t / 125);
@@ -1494,6 +1499,21 @@
     draw(e, c) {
       const f = Math.floor(e.wob) & 15;
       Sprites.draw(c, 's6_nuc_body', e.x, e.y, { frame: f });
+      // cilia along the membrane (the mouth is left bare)
+      {
+        const rim = S6_RIM[f], cx = Math.round(e.x - S6_BODY_N / 2) + (S6_BODY_N - 1) / 2, cy = Math.round(e.y - S6_BODY_N / 2) + (S6_BODY_N - 1) / 2;
+        for (let k = 0; k < 60; k++) {
+          const a = -Math.PI + ((k + 0.5) * TAU) / 60;
+          if (Math.abs(Math.abs(a) - Math.PI) < 0.42) continue;
+          const r0 = rim[Math.min(S6_RIM_N - 1, Math.floor(((a + Math.PI) / TAU) * S6_RIM_N))] + 0.4;
+          const len = 3 + ((k * 7) % 3), sw = Math.sin(e.pt * 0.09 * e.spd + k * 0.9) * 0.032; // radians: about 1.5 px of sway at the tip
+          for (let i = 0; i < len; i++) {
+            const aa = a + sw * (i / len), rr = r0 + i;
+            c.fillStyle = i === len - 1 ? '#ffe0f8' : i === 0 ? '#a03aa0' : '#e070d0';
+            c.fillRect(Math.round(cx + Math.cos(aa) * rr), Math.round(cy + Math.sin(aa) * rr), 1, 1);
+          }
+        }
+      }
       // organelles drifting inside the cytoplasm
       for (let i = 0; i < 5; i++) {
         const a = e.pt * 0.006 * (i % 2 ? -1 : 1) + i * 1.26;
@@ -1513,18 +1533,18 @@
         if (!hot) Sprites.draw(c, 's6_frost' + (openAmt > 1.6 ? 2 : openAmt > 0.6 ? 1 : 0), e.x + n.ox, e.y);
         else if (e.st === 'open') {
           // pulsing halo: "shoot here"
-          c.fillStyle = (e.pt >> 3) & 1 ? '#ffe646' : '#ff9424';
+          c.fillStyle = !G.reduceFlash && (e.pt >> 3) & 1 ? '#ffe646' : '#ff9424';
           s6Ring(c, e.x + n.ox, e.y, 17 + ((e.pt >> 4) & 1));
         }
       }
       Sprites.draw(c, 's6_maw' + clamp(Math.round(openAmt), 0, 3), e.x - 29, e.y);
       // telegraph for the radial burst: the membrane swells with light
       if (e.charge > 0) {
-        c.fillStyle = (e.charge >> 1) & 1 ? '#ffffff' : '#ffbdf0';
+        c.fillStyle = !G.reduceFlash && (e.charge >> 1) & 1 ? '#ffffff' : '#ffbdf0';
         s6Ring(c, e.x, e.y, S6_BODY_R + 2 + ((24 - e.charge) >> 3));
       }
       if (e.st === 'split') {
-        c.fillStyle = (e.pt >> 2) & 1 ? '#ffffff' : '#f478c8';
+        c.fillStyle = !G.reduceFlash && (e.pt >> 2) & 1 ? '#ffffff' : '#f478c8';
         s6Ring(c, e.x, e.y, S6_BODY_R + 1);
       }
     },
@@ -1659,7 +1679,7 @@
     E(2090, -30);
     E(2120, 32);
     S.ceil(2170, 's6_spore', { count: 5 });
-    S.ground(2210, 's6_spore', { count: 5 });
+    S.ground(2210, 's6_spore', { count: 5, carry: true });
     V(2130, 5, 0, { carry: 'last' });
     s6Wall(S, 2262, { id: 'w5', cols: 2, size: 13, gaps: [s6Gap(2262, 6, 60)], div: { n: 2, at: 248, warn: 50, grow: 80, minGap: 34, sides: ['above'] }, carry: { col: 1, row: 2 } });
 

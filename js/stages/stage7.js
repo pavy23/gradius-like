@@ -613,7 +613,6 @@
     const rng = makeRng(31);
     const BODY = '#0c1322', RIM = '#22355a', RIM2 = '#162441', AMBER = '#c08030', CYAN = '#2a8aa8';
     const base = H - 34;
-    const wrapX = (x) => ((x % P) + P) % P;
     const rect = (x, y, w, h, col) => { for (const o of [0, -P, P]) if (x + o + w > 0 && x + o < P) d.rect(x + o, y, w, h, col); };
     const bastion = (x, w, h) => {
       const tw = Math.round(w * 0.6), off = (w - tw) >> 1, top = base - h;
@@ -674,7 +673,6 @@
       }
       x += w + 4 + Math.floor(rng() * 10);
     }
-    void wrapX;
     return d.c;
   }
 
@@ -778,6 +776,21 @@
   s7bakeGearFrames('s7_gearA', 26, 12);
   s7bakeGearFrames('s7_gearB', 18, 9);
 
+  /** the reactor core glowing behind the machinery (passes by during the cage hall) */
+  Sprites.painted('s7_reactor', 150, 150, 2, (d, f) => {
+    const c = 75;
+    const cols = ['#160a08', '#26100a', '#421a0e', '#66280f', '#8c3a14', '#b05a1c', '#d88a3c', '#f4c070'];
+    const radii = [74, 64, 54, 44, 34, 24, 14, 6];
+    radii.forEach((r, i) => d.circle(c - 0.5, c - 0.5, r + (f && i > 3 ? 1 : 0), cols[i]));
+    // structural rings and spokes
+    d.ring(c - 0.5, c - 0.5, 58, 2, '#0a0e16');
+    d.ring(c - 0.5, c - 0.5, 30, 1, '#0a0e16');
+    for (let k = 0; k < 12; k++) {
+      const a = (k * TAU) / 12 + f * 0.13;
+      d.line(c + Math.cos(a) * 32, c + Math.sin(a) * 32, c + Math.cos(a) * 58, c + Math.sin(a) * 58, '#0a0e16');
+    }
+  });
+
   const s7strip = (ctx, img, off, y) => {
     const P = img.width;
     const o = ((Math.floor(off) % P) + P) % P;
@@ -825,6 +838,22 @@
             if (x < -20) x += 512;
             for (const xx of [x, x - 512]) ctx.fillRect(Math.floor(xx) - 6, 0, 26, H);
           }
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.globalAlpha = 1;
+        },
+      },
+      { // inside: the reactor core far behind the girders
+        kind: 'custom',
+        draw(ctx, camX, t) {
+          const a = 1 - s7outerA(camX);
+          const sx = 830 - camX * 0.3;
+          if (a <= 0 || sx < -90 || sx > W + 90) return;
+          const pulse = 0.5 + 0.5 * Math.sin(t * 0.05);
+          ctx.globalAlpha = a * (0.30 + 0.10 * pulse);
+          Sprites.draw(ctx, 's7_reactor', Math.round(sx), 108, { frame: (t >> 4) & 1 });
+          ctx.globalCompositeOperation = 'lighter';
+          ctx.globalAlpha = a * 0.05 * pulse;
+          Sprites.draw(ctx, 's7_reactor', Math.round(sx), 108, { frame: (t >> 4) & 1 });
           ctx.globalCompositeOperation = 'source-over';
           ctx.globalAlpha = 1;
         },
@@ -903,9 +932,9 @@
   /** fortress turret family: 'gun' (single aimed), 'twin' (paired volleys), 'rapid' (locked burst) */
   function s7turretDef(kind) {
     const CFG = {
-      gun: { w: 14, h: 9, hp: 3, score: 200, rate: 135, charge: 26, turn: 0.045, spr: 's7_gun' },
-      twin: { w: 20, h: 10, hp: 5, score: 320, rate: 165, charge: 30, turn: 0.035, spr: 's7_twin' },
-      rapid: { w: 13, h: 12, hp: 5, score: 320, rate: 185, charge: 34, turn: 0.04, spr: 's7_rapid' },
+      gun: { w: 14, h: 9, hp: 3, score: 200, rate: 125, charge: 26, turn: 0.045, spr: 's7_gun' },
+      twin: { w: 20, h: 10, hp: 5, score: 320, rate: 175, charge: 30, turn: 0.035, spr: 's7_twin' },
+      rapid: { w: 13, h: 12, hp: 5, score: 320, rate: 205, charge: 34, turn: 0.04, spr: 's7_rapid' },
     }[kind];
     const muzzle = (e, side) => {
       const cy = e.y + (e.attach === 'ceil' ? 2 : -2);
@@ -1419,25 +1448,25 @@
    * MID-BOSS — ELECTRONIC CAGE
    * Two rail-mounted emitter pylons (top / bottom of the reactor
    * hall) slide in and hold the right side of the screen for ~8 s.
-   * Their lightning bars pivot around the pylon tips:
-   *   cycle A "scissors": both bars swing inward and close the lane
-   *   cycle B "sweep":    one bar wipes across the hall
-   * Every attack is telegraphed (dashed preview lines). Destroy both
-   * pylons to break the cage (drops a capsule). If ignored the cage
-   * powers down and slides away by itself. The scroll never stops.
+   * Their lightning bars close a cage around YOUR lane. The lane
+   * follows you during the warning (dotted preview) and is locked
+   * when the bars arm, so staying put is always safe:
+   *   cycle A "scissors": both bars pivot around the pylon tips and
+   *                       close on a 56 px lane (a funnel)
+   *   cycle B "comb":     a lightning curtain sweeps across the hall
+   *                       with a 56 px gap at your height
+   * Destroy both pylons to break the cage (drops a capsule). If
+   * ignored the cage powers down and slides away by itself. The
+   * scroll never stops.
    * ============================================================= */
-  const CAGE = { intro: 50, idle: 40, warn: 45, close: 60, hold: 35, open: 50, lock: 500, len: 196 };
+  const CAGE = { intro: 50, idle: 40, warn: 45, close: 60, hold: 35, open: 50, lock: 500, len: 196, boxes: 17, half: 28 };
   CAGE.cycle = CAGE.idle + CAGE.warn + CAGE.close + CAGE.hold + CAGE.open;
 
   const s7ease = (k) => (k < 0.5 ? 2 * k * k : 1 - 2 * (1 - k) * (1 - k));
-  function s7segDist(px, py, x0, y0, x1, y1) {
-    const dx = x1 - x0, dy = y1 - y0;
-    const t = clamp(((px - x0) * dx + (py - y0) * dy) / (dx * dx + dy * dy), 0, 1);
-    return Math.hypot(px - (x0 + dx * t), py - (y0 + dy * t));
-  }
   /** jagged lightning bar from (x0,y0) to (x1,y1) (pixel steps, re-rolled every 2 frames) */
   function s7bolt(c, x0, y0, x1, y1, t, cols, jit = 4) {
     const len = Math.hypot(x1 - x0, y1 - y0);
+    if (len < 1) return;
     const ux = (x1 - x0) / len, uy = (y1 - y0) / len;
     const nx = -uy, ny = ux;
     for (let pass = 0; pass < 3; pass++) {
@@ -1468,16 +1497,25 @@
         { name: 'pT', ox: 0, oy: e.ct + 14 - e.y, w: 18, h: 26, hp, max: hp, vuln: true, expl: 'l', score: 800 },
         { name: 'pB', ox: 0, oy: e.fb - 14 - e.y, w: 18, h: 26, hp, max: hp, vuln: true, expl: 'l', score: 800 },
       ];
-      e.beams = []; // active bars this frame: {x0,y0,x1,y1}
+      // lethal boxes strung along each lightning bar (dead = switched off); real parts, so shots and bots see them
+      for (let side = 0; side < 2; side++) {
+        for (let i = 0; i < CAGE.boxes; i++) e.parts.push({ name: side ? 'beamB' : 'beamT', ox: 0, oy: 0, w: 6, h: 6, hp: 99999, vuln: false, solid: false, dead: true });
+      }
+      e.beams = []; // active bars this frame: {x0,y0,x1,y1,side}
       e.armed = false;
       e.preview = null;
       e.leaving = false;
+      e.thT = 0; // scissors: final swing angles of the two bars (locked when they arm)
+      e.thB = 0;
+      e.lane = e.y; // lane centre (follows the player during the warning)
+      e.comb = 0; // comb curtain x while sweeping
     },
     update(e) {
       const P = G.player, t = e.t;
       e.beams = [];
       e.armed = false;
       e.preview = null;
+      for (let i = 2; i < e.parts.length; i++) e.parts[i].dead = true;
       // intro: slide in along the wall rails; outro: power down and slide away
       if (t < CAGE.intro) e.x += (e.homeX - e.x) * 0.09;
       else if (!e.leaving) e.x = e.homeX;
@@ -1495,9 +1533,7 @@
       const tipT = { x: e.x - 0.5, y: e.ct + 23.5 }, tipB = { x: e.x - 0.5, y: e.fb - 23.5 };
       const u = t - CAGE.intro - 20;
       const cyc = Math.floor(u / CAGE.cycle), ph = u % CAGE.cycle;
-      const pat = cyc % 2 === 0 ? 'scissors' : 'sweep';
-      const sweeper = cyc % 4 === 1 ? 0 : 1; // which pylon wipes (0 top, 1 bottom)
-      const tmax = pat === 'scissors' ? s7rad(23) : s7rad(40);
+      const pat = cyc % 2 === 0 ? 'scissors' : 'comb';
       const aim = (tip, dirY, th) => ({ x0: tip.x, y0: tip.y, x1: tip.x - Math.cos(th) * CAGE.len, y1: tip.y + dirY * Math.sin(th) * CAGE.len });
       // aimed spark orbs while idle
       if (ph === 14 && !pT.dead && G.canFire({ x: e.x, y: tipT.y })) {
@@ -1508,33 +1544,53 @@
         const [vx, vy] = G.aim(tipB.x, tipB.y, 1.2);
         G.ebullet(tipB.x - 4, tipB.y, vx, vy, { spr: 'ebullet2', w: 5, h: 5 });
       }
-      const wT = pat === 'scissors' || sweeper === 0, wB = pat === 'scissors' || sweeper === 1;
       const t0 = CAGE.idle, t1 = t0 + CAGE.warn, t2 = t1 + CAGE.close, t3 = t2 + CAGE.hold;
-      let th = 0;
       if (ph >= t0 && ph < t1) {
-        e.preview = { th: tmax, top: wT && !pT.dead, bot: wB && !pB.dead, blink: (ph >> 2) & 1 };
+        // warning: the lane follows you, then freezes when the bars start to move
+        if (ph === t0) e.lane = P.alive ? P.y : e.y;
+        e.lane += ((P.alive ? P.y : e.y) - e.lane) * 0.12;
+        const lx = clamp(P.alive ? P.x : 60, 30, 140);
+        e.lane = clamp(e.lane, e.ct + 46, e.fb - 46);
+        e.thT = clamp(Math.atan2(e.lane - CAGE.half - tipT.y, tipT.x - lx), 0.06, 0.5);
+        e.thB = clamp(Math.atan2(tipB.y - (e.lane + CAGE.half), tipB.x - lx), 0.06, 0.5);
+        e.preview = { pat, lane: e.lane, thT: e.thT, thB: e.thB, top: !pT.dead, bot: !pB.dead, blink: (ph >> 2) & 1 };
         if (ph === t0) sfx('electric');
       } else if (ph >= t1) {
-        if (ph < t2) th = tmax * s7ease((ph - t1) / CAGE.close);
-        else if (ph < t3) th = tmax;
-        else th = tmax * (1 - s7ease((ph - t3) / CAGE.open));
-        e.armed = th > 0.03 || ph < t3;
         if (ph === t1) sfx('electric');
+        if (pat === 'scissors') {
+          const kk = ph < t2 ? s7ease((ph - t1) / CAGE.close) : ph < t3 ? 1 : 1 - s7ease((ph - t3) / CAGE.open);
+          e.armed = kk > 0.02 || ph < t3;
+          if (e.armed) {
+            if (!pT.dead) e.beams.push(Object.assign(aim(tipT, 1, e.thT * kk), { side: 0 }));
+            if (!pB.dead) e.beams.push(Object.assign(aim(tipB, -1, e.thB * kk), { side: 1 }));
+          }
+        } else if (ph < t3) {
+          // comb: curtain from the walls to the lane edges, sweeping left across the hall
+          e.armed = true;
+          e.comb = 200 - 182 * ((ph - t1) / (t3 - t1));
+          if (!pT.dead) e.beams.push({ x0: e.comb, y0: e.ct + 4, x1: e.comb, y1: e.lane - CAGE.half, side: 0 });
+          if (!pB.dead) e.beams.push({ x0: e.comb, y0: e.lane + CAGE.half, x1: e.comb, y1: e.fb - 4, side: 1 });
+        }
         if (e.armed && (ph - t1) % 30 === 15) sfx('electric');
       }
-      if (e.armed) {
-        if (wT && !pT.dead) e.beams.push(aim(tipT, 1, th));
-        if (wB && !pB.dead) e.beams.push(aim(tipB, -1, th));
-        if (P.alive) for (const b of e.beams) if (s7segDist(P.x, P.y, b.x0, b.y0, b.x1, b.y1) < 5.5) P.hit();
+      for (const b of e.beams) {
+        const len = Math.hypot(b.x1 - b.x0, b.y1 - b.y0);
+        if (len < 1) continue;
+        const ux = (b.x1 - b.x0) / len, uy = (b.y1 - b.y0) / len;
+        for (let i = 0; i < CAGE.boxes; i++) {
+          const d = 6 + 12 * i;
+          if (d > len) break;
+          const p = e.parts[2 + b.side * CAGE.boxes + i];
+          p.dead = false;
+          p.ox = b.x0 + ux * d - e.x;
+          p.oy = b.y0 + uy * d - e.y;
+        }
       }
       e.tipT = tipT;
       e.tipB = tipB;
-      e.tmax = tmax;
-      e.wT = wT;
-      e.wB = wB;
     },
     onPartDeath(e, p) {
-      if (e.parts.every((q) => q.dead)) G.kill(e);
+      if (e.parts[0].dead && e.parts[1].dead) G.kill(e);
     },
     onDeath(e) {
       e.carry = false;
@@ -1545,18 +1601,32 @@
     },
     draw(e, c) {
       const pT = e.parts[0], pB = e.parts[1];
-      // preview lines (dashed): where the bars will swing to
+      // preview (dotted): where the bars will end up / the lane they will leave open
       if (e.preview && e.tipT) {
         const pv = e.preview;
-        for (const [on, tip, dirY] of [[pv.top, e.tipT, 1], [pv.bot, e.tipB, -1]]) {
-          if (!on) continue;
-          for (const th of [0, pv.th]) {
-            const dx = -Math.cos(th), dy = dirY * Math.sin(th);
-            for (let d = 6; d < CAGE.len; d += 5) {
-              if (th > 0 && !pv.blink) continue;
-              c.fillStyle = th === 0 ? '#48ecf4' : '#2a6aa8';
-              c.fillRect(Math.round(tip.x + dx * d), Math.round(tip.y + dy * d), 1, 1);
+        if (pv.pat === 'scissors') {
+          for (const [on, tip, dirY, thF] of [[pv.top, e.tipT, 1, pv.thT], [pv.bot, e.tipB, -1, pv.thB]]) {
+            if (!on) continue;
+            for (const th of [0, thF]) {
+              const dx = -Math.cos(th), dy = dirY * Math.sin(th);
+              for (let d = 6; d < CAGE.len; d += 5) {
+                if (th > 0 && !pv.blink) continue;
+                c.fillStyle = th === 0 ? '#48ecf4' : '#2a6aa8';
+                c.fillRect(Math.round(tip.x + dx * d), Math.round(tip.y + dy * d), 1, 1);
+              }
             }
+          }
+        } else {
+          // comb: lane guides and the curtain's start line
+          for (let x = 24; x < 204; x += 6) {
+            c.fillStyle = pv.blink ? '#48ecf4' : '#2a6aa8';
+            c.fillRect(x, Math.round(pv.lane - CAGE.half), 3, 1);
+            c.fillRect(x, Math.round(pv.lane + CAGE.half), 3, 1);
+          }
+          for (let y = e.ct + 4; y < e.fb - 4; y += 5) {
+            if (y > pv.lane - CAGE.half && y < pv.lane + CAGE.half) continue;
+            c.fillStyle = '#48ecf4';
+            c.fillRect(200, y, 1, 2);
           }
         }
       }
@@ -1680,7 +1750,6 @@
       w.yt = e.ct + (w.yc - GAP / 2 - e.ct) * k;
       w.yb = e.fb - (e.fb - (w.yc + GAP / 2)) * k;
       if (st === t0) { sfx('coreClose'); G.shake = Math.max(G.shake, 2); }
-      if (k > 0.02 && P.alive && P.x < BRAIN.wallReach + 2 && (P.y - 3 < w.yt || P.y + 3 > w.yb)) P.hit();
       if (st % 50 === 30 && P.alive) {
         const [vx, vy] = G.aim(e.x - 30, e.y, 1.4);
         G.ebullet(e.x - 30, e.y, vx, vy, S7_ORB);
@@ -1847,13 +1916,38 @@
       lz.y0 = e.y + ep.oy;
       lz.x1 = lz.x0 + Math.cos(lz.ang) * 240;
       lz.y1 = lz.y0 + Math.sin(lz.ang) * 240;
-      if (s7segDist(P.x, P.y, lz.x0, lz.y0, lz.x1, lz.y1) < 5.5) P.hit();
       if (lz.t >= 80) {
         lz.state = 'idle';
         lz.cd = G.fireDelay(300 - dead * 45);
         ep.ch = 0;
       }
     }
+  }
+
+  /** lethal boxes along the eye laser (part indices 7..27); seg = null switches them all off */
+  function s7brainLaserParts(e, seg) {
+    for (let i = 0; i < 21; i++) {
+      const p = e.parts[7 + i];
+      const d = 10 + 12 * i;
+      if (!seg || d > 240) { p.dead = true; continue; }
+      p.dead = false;
+      p.ox = seg.x0 + ((seg.x1 - seg.x0) / 240) * d - e.x;
+      p.oy = seg.y0 + ((seg.y1 - seg.y0) / 240) * d - e.y;
+    }
+  }
+  /** crusher plates as solid parts (indices 5, 6) while the walls are out */
+  function s7brainWallParts(e) {
+    const w = e.wl, R = BRAIN.wallReach;
+    const on = !!(w && w.k > 0.02);
+    const top = e.parts[5], bot = e.parts[6];
+    top.dead = bot.dead = !on;
+    if (!on) return;
+    top.w = bot.w = R + 4;
+    top.ox = bot.ox = R / 2 - e.x;
+    top.h = Math.max(1, w.yt - e.ct);
+    top.oy = (e.ct + w.yt) / 2 - e.y;
+    bot.h = Math.max(1, e.fb - w.yb);
+    bot.oy = (w.yb + e.fb) / 2 - e.y;
   }
 
   ENEMIES.s7_brain = {
@@ -1893,7 +1987,10 @@
         eye(0, 90), eye(1, 140), eye(2, 190),
         { name: 'brain', ox: 0, oy: 0, w: 76, h: 62, hp: bh, max: bh, vuln: false, expl: 'xl', score: 10000 },
         { name: 'glass', ox: 0, oy: 0, w: 102, h: 152, hp: 99999, vuln: false },
+        { name: 'wallT', ox: 0, oy: 0, w: 140, h: 4, hp: 99999, vuln: false, dead: true },
+        { name: 'wallB', ox: 0, oy: 0, w: 140, h: 4, hp: 99999, vuln: false, dead: true },
       ];
+      for (let i = 0; i < 21; i++) e.parts.push({ name: 'laser', ox: 0, oy: 0, w: 6, h: 6, hp: 99999, vuln: false, solid: false, dead: true });
     },
     update(e) {
       const P = G.player;
@@ -2007,6 +2104,8 @@
           break;
         }
       }
+      s7brainLaserParts(e, e.phase === 'p1' && e.lz.state === 'sweep' ? e.lz : null);
+      s7brainWallParts(e);
     },
     gauge(e) {
       let cur = 0, max = 0;
@@ -2198,21 +2297,23 @@
       S.ground(805, 's7_rack');
       S.wave(700, 's7_mine', { n: 3, gap: 44, y: 80, dy: 34, speed: 0.55 });
       S.ground(862, 's7_rack', { shift: 1 });
-      lamps([[463, 146], [600, 132, true], [736, 152]]);
+      lamps([[446, 168], [480, 168, true], [583, 164, true], [617, 164], [719, 170], [753, 170, true]]);
 
       /* ---- calm (cp1 = 912) ---- */
-      S.wave(1000, 'spinner', { n: 5, gap: 12, y: 96, dirY: 1, turnX: 140, ...carry });
-      S.wave(1085, 'diver', { n: 4, gap: 22, y: 60, dy: 30 });
+      S.wave(1030, 'spinner', { n: 5, gap: 12, y: 96, dirY: 1, turnX: 140, ...carry });
+      S.wave(1105, 'diver', { n: 4, gap: 22, y: 60, dy: 30 });
       S.banner(1140, ['HANGAR']);
 
       /* ---- 2. HANGAR: bays, gantry turrets, belts ---- */
       S.wave(1225, 's7_drone', { n: 4, gap: 16, y: 110, mode: 'sine', amp: 24 });
+      S.ceil(1245, 's7_gun');
       S.ground(1290, 's7_bay', { count: 3 });
       S.ceil(1337, 's7_gun');
       S.ground(1400, 's7_belt', { len: 108, dir: -1 });
       S.ceil(1421, 's7_twin');
       S.wave(1330, 'spinner', { n: 5, gap: 12, y: 140, dirY: -1, turnX: 120 });
-      S.ground(1500, 's7_bay', { count: 3, carry: true });
+      S.ceil(1470, 's7_gun');
+      S.ground(1500, 's7_bay', { count: 4, carry: true });
       S.ground(1600, 's7_walker', { dir: -1 });
       S.ceil(1620, 's7_rapid');
       S.wave(1480, 's7_drone', { n: 5, gap: 14, y: 120, mode: 'sine', amp: 30 });

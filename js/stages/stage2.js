@@ -1226,9 +1226,11 @@
       e.tm--;
       if (e.st === 0) {
         e.y = e.y0;
-        if (e.tm <= 0 && e.x < W - 10 && e.x > 20) { e.st = 1; e.tm = 30; sfx('stomp'); }
+        if (e.tm <= 0 && e.x < W - 10 && e.x > 20) { e.st = 1; e.tm = 34; sfx('stomp'); }
       } else if (e.st === 1) {
         e.jit = e.tm & 2 ? 1 : -1;
+        // grit trickles down while it works loose
+        if ((e.tm & 3) === 0) G.fx.push({ k: 'part', x: e.x + rnd(-3, 3), y: e.y + 6, vx: -G.camSpeed * 0.5, vy: 0.3, life: 22, t: 0, col: chance(0.5) ? '#9eaac0' : '#5d6882', big: false });
         if (e.tm <= 0) { e.st = 2; e.vy = 0.4; e.jit = 0; }
       } else if (e.st === 2) {
         e.vy = Math.min(3.2, e.vy + 0.1);
@@ -1254,7 +1256,7 @@
       let st = e.st, tm = e.tm, y = e.y, vy = e.vy || 0;
       for (let i = 0; i < dt; i++) {
         tm--;
-        if (st === 0) { y = e.y0; if (tm <= 0) { st = 1; tm = 30; } }
+        if (st === 0) { y = e.y0; if (tm <= 0) { st = 1; tm = 34; } }
         else if (st === 1) { if (tm <= 0) { st = 2; vy = 0.4; } }
         else if (st === 2) { vy = Math.min(3.2, vy + 0.1); y += vy; if (y > H - 34) { st = 3; tm = 70; } }
         else if (tm <= 0) { st = 0; tm = 90; y = e.y0; }
@@ -1413,9 +1415,9 @@
       /* ---- outer ring ---- */
       S.fixed(698, 112, 's2_sentinel', { reach: 22 });
       S.ground(625, 'walker', { dir: -1 });
+      S.ground(557, 'turret');
       sw(560, { pat: 'swoop', n: 12, gap: 5, y: 20, y0: -14, y1: 120, per: 170, speed: 1.6 });
-      sw(650, { pat: 'braid', n: 16, gap: 4, y: 52, amp: 16, per: 90, speed: 1.7, strands: 3, carry: 'last' });
-      sw(700, { pat: 'zig', n: 12, gap: 5, y: 60, amp: 30, per: 70, speed: 1.8 });
+      sw(650, { pat: 'braid', n: 16, gap: 4, y: 48, amp: 14, per: 90, speed: 1.7, strands: 3, carry: 'last' });
       sw(980, { pat: 'converge', n: 10, gap: 6, y: 38, ty: 150, T: 100, speed: 1.7 });
       sw(1050, { pat: 'converge', n: 10, gap: 6, y: 172, ty: 60, T: 100, speed: 1.7, carry: 'last' });
       sw(1080, { pat: 'lattice', n: 18, gap: SAME, y: 42, rows: 3, rowGap: 14, amp: 6, per: 120, speed: 1.6, colGap: 9 });

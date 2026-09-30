@@ -292,10 +292,13 @@
   Sprites.recolor('s4_crawler', 's4_crawler_c', { V: 'R', v: 'r', p: 'o', W: 'y', '#1c0c30': '#3a0808' });
 
   /* ---- projectiles of this stage ---- */
-  Sprites.def('s4_glob', [
-    ['..rr..', '.roor.', 'royyor', 'royyor', '.roor.', '..RR..'],
-    ['..RR..', '.rooR.', 'roywor', 'royyor', '.rooR.', '..rr..'],
-  ]);
+  Sprites.painted('s4_glob', 8, 8, 2, (d, f) => {
+    d.circle(3.5, 3.5, 2.9, 'r');
+    d.circle(3.5, 3.5, 2.1, 'o');
+    d.circle(3.4, 3.4, 1.2, f ? 'w' : 'y');
+    d.px(2, 6 + f, 'R');
+    d.outline('#3a0808', true);
+  });
   Sprites.painted('s4_spike', 7, 14, 2, (d, f) => {
     d.poly([[1, 0], [6, 0], [4.5, 8], [3.5, 13], [2.5, 8]], 'g');
     d.poly([[1, 0], [3, 0], [3, 12], [2.5, 8]], 'W');
@@ -344,6 +347,20 @@
     d.px(3, 3, 'w'); d.px(4, 3, 'h');
     if (f === 2) { d.px(8, 8, 'r'); d.px(2, 8, 'r'); d.px(9, 5, 'y'); }
     d.outline('#4a0a06');
+  });
+
+  /* ---- fire light: dithered glow discs drawn behind flames / geysers with low alpha ---- */
+  [8, 13, 19].forEach((r, k) => {
+    Sprites.painted('s4_glow_' + k, r * 2 + 3, r * 2 + 3, 1, (d) => {
+      const c = r + 1;
+      for (let y = -r; y <= r; y++) {
+        for (let x = -r; x <= r; x++) {
+          const q = Math.sqrt(x * x + y * y);
+          if (q > r + 0.3) continue;
+          if (q < r * 0.5 || ((x + y) & 1) === 0 || (q < r * 0.78 && ((x * 3 + y) & 3) === 0)) d.px(c + x, c + y, q < r * 0.5 ? '#ffb040' : '#ff7a24');
+        }
+      }
+    });
   });
 
   /* ---- IRON MAIDEN (mid-boss): armoured tank that crawls along the ceiling ---- */
@@ -422,7 +439,11 @@
     });
   }
   // bomb-lobbed shrapnel spark, tiny ember bullet
-  Sprites.def('s4_ember', [['.oo.', 'oyyo', 'oyyo', '.oo.'], ['.rr.', 'royr', 'roor', '.rr.']]);
+  Sprites.painted('s4_ember', 6, 6, 2, (d, f) => {
+    d.circle(2.5, 2.5, 1.9, f ? 'r' : 'o');
+    d.circle(2.5, 2.5, 1.1, f ? 'y' : 'h');
+    d.outline('#3a0808');
+  });
 
   /* ---- custom terrain tile: charred basalt with faint strata and glowing fissures ---- */
   Terrain.TILES.s4_basalt = (sk, rng) => {
@@ -473,7 +494,7 @@
   // hanging volcanoes: flat rim with a crater bowl at the tip (the tip points DOWN)
   const VOLCS = [
     { cx: 610, w: 250, rim: 84, cw: 30, cd: 12 },
-    { cx: 1520, w: 260, rim: 92, cw: 32, cd: 12 },
+    { cx: 1520, w: 260, rim: 96, cw: 32, cd: 12 },
     { cx: 1830, w: 250, rim: 88, cw: 32, cd: 12 },
     { cx: 2150, w: 260, rim: 92, cw: 34, cd: 13 },
     { cx: 3730, w: 250, rim: 92, cw: 32, cd: 12 },
@@ -520,7 +541,7 @@
     { type: 'hill', x: 1195, w: 200, h: 84, shape: 'cos' },
     { type: 'hill', x: 1385, w: 170, h: 96, shape: 'cos' },
     // C: hills between the hanging volcanoes
-    { type: 'hill', x: 1522, w: 120, h: 44, shape: 'cos' },
+    { type: 'hill', x: 1522, w: 150, h: 43, shape: 'cos' },
     { type: 'hill', x: 1690, w: 200, h: 92, shape: 'cos' },
     { type: 'hill', x: 1835, w: 150, h: 46, shape: 'cos' },
     { type: 'hill', x: 2000, w: 150, h: 68, shape: 'cos' },
@@ -533,6 +554,18 @@
     // arena floor (flat & calm)
     { type: 'flat', x0: 3990, x1: LEN, h: 38 },
   ];
+  // craggy silhouettes: the rounded hills get a little rocky roughness on top (not the two squeeze hills under the volcano tips)
+  const HILL_FNS = FLOOR.filter((f) => f.type === 'hill' && f.x !== 1522 && f.x !== 1835).map((f) => Terrain.FEATURES.hill(f));
+  FLOOR.push({
+    type: 'fn', x0: 300, x1: 3520,
+    fn: (x) => {
+      let h = 0;
+      for (const fn of HILL_FNS) h = Math.max(h, fn(x));
+      if (h <= BASE + 4) return 0;
+      const k = Math.min(1, (h - BASE - 4) / 12);
+      return h + (vnoise(x * 0.09, 3.7) * 0.7 + vnoise(x * 0.31, 9.1) * 0.3) * 5 * k;
+    },
+  });
   const CEIL = [
     { type: 'hill', x: 196, w: 40, h: 20, shape: 'tri' },
     { type: 'hill', x: 248, w: 46, h: 32, shape: 'tri' },
@@ -552,6 +585,11 @@
     lush: [['s4_pine_a', 3], ['s4_pine_b', 3], ['s4_pine_c', 2], ['s4_cedar_a', 1.4], ['s4_cedar_b', 1.2], ['s4_bush_a', 1], ['s4_bush_b', 1]],
     burn: [['s4_spine_a', 3], ['s4_spine_b', 3], ['s4_spine_c', 2], ['s4_scedar_a', 1], ['s4_sbush', 1], ['s4_snag_b', 1.2], ['s4_snag_c', 1]],
     char: [['s4_snag_a', 2], ['s4_snag_b', 2.4], ['s4_snag_c', 2.4], ['s4_sbush', 1.6], ['s4_spine_a', 0.8]],
+  };
+  const TREE_SMALL = {
+    lush: [['s4_pine_a', 3], ['s4_bush_a', 1.5], ['s4_bush_b', 1.5]],
+    burn: [['s4_spine_a', 3], ['s4_sbush', 2], ['s4_snag_c', 1.5]],
+    char: [['s4_snag_c', 2], ['s4_sbush', 2]],
   };
   const inZone = (list, x, pad) => list.some((z) => x >= z[0] - pad && x <= z[1] + pad);
 
@@ -593,14 +631,14 @@
       const fh = T.floorH[ix];
       if (fh < 30 || LAVACOL[ix] || LAVACOL[ix - 5] || LAVACOL[ix + 5] || inZone(clear, ix, 15)) continue;
       const slope = (surf(ix + 5) - surf(ix - 5)) / 10;
-      if (Math.abs(slope) > 1.6) continue;
-      // pick a kind (weighted), then shrink until the air gap under the ceiling is kept
-      const set = TREE_SETS[st];
+      if (Math.abs(slope) > 2.3) continue;
+      // pick a kind (weighted), then shrink until the air gap under the ceiling is kept; steep flanks only get small growth
+      const set = Math.abs(slope) > 1.3 ? TREE_SMALL[st] : TREE_SETS[st];
       let tot = 0;
       for (const k of set) tot += k[1];
       let r = rng() * tot, pick = set[0][0];
       for (const k of set) { r -= k[1]; if (r <= 0) { pick = k[0]; break; } }
-      const yb = Math.max(surf(ix - 1), surf(ix), surf(ix + 1)) + 1;
+      const yb = Math.max(surf(ix - 2), surf(ix - 1), surf(ix), surf(ix + 1), surf(ix + 2)) + 1;
       const order = st === 'lush' ? [pick, 's4_pine_a', 's4_bush_b'] : [pick, 's4_spine_a', 's4_sbush', 's4_snag_c'];
       let use = null;
       for (const nme of order) {
@@ -913,9 +951,20 @@
       if (e.warn > 0) {
         if (--e.warn === 0) {
           sfx('eruption');
+          G.shake = Math.max(G.shake, 1.7);
           e.jet = 18;
           for (let i = 0; i < e.burst; i++) {
-            G.later(i * 6, () => { if (!e.dead) G.spawn('s4_rock', { x: e.x + rnd(-5, 5), y: e.roofY + 9 }); });
+            const aimed = e.o.aim && i === e.burst - 1;
+            G.later(i * 6, () => {
+              if (e.dead) return;
+              const o = { x: e.x + rnd(-5, 5), y: e.roofY + 9 };
+              if (aimed && G.player.alive && e.x > G.player.x + 50) {
+                // one lobbed rock that comes down where you are now
+                o.vy = 1.3;
+                o.vx = clamp((G.player.x - o.x) / 52, -1.8, 0.6) + G.camSpeed;
+              }
+              G.spawn('s4_rock', o);
+            });
           }
           e.cd = G.fireDelay(e.every) + rndi(0, 40);
         }
@@ -960,6 +1009,7 @@
           e.ph = 'up'; e.pt = GEY.up;
           e.ghost = false; e.harmless = false; e.invuln = true;
           sfx('eruption');
+          G.shake = Math.max(G.shake, 1.2);
         }
       } else if (e.ph === 'up') {
         e.colH = e.colMax * Math.pow(1 - e.pt / GEY.up, 0.6);
@@ -1003,6 +1053,8 @@
       if (e.colH > 1.5) {
         const cx = Math.round(e.x), top = e.base - e.colH;
         const n = Math.ceil(e.colH);
+        Sprites.draw(c, 's4_glow_1', cx, e.base - 4, { alpha: 0.26 });
+        Sprites.draw(c, 's4_glow_1', cx, top + 4, { alpha: 0.2 });
         for (let i = 0; i < n; i++) {
           const y = Math.round(e.base - 1 - i);
           const wob = Math.round(Math.sin(i * 0.33 + e.t * 0.35) * 1.0);
@@ -1069,13 +1121,15 @@
     init(e, o) {
       e.dir = o.dir !== undefined ? o.dir : -1;
       e.speed = o.speed || 0.3;
+      e.turnCd = 0;
       e.cd = 70 + rndi(0, 60);
     },
     update(e) {
       const T = G.terrain;
       e.wx += e.dir * e.speed;
       const here = T.ceilBottom(e.wx), ahead = T.ceilBottom(e.wx + e.dir * 10);
-      if (Math.abs(ahead - here) > 5) e.dir = -e.dir;
+      if (e.turnCd > 0) e.turnCd--;
+      else if (Math.abs(ahead - here) > 5) { e.dir = -e.dir; e.turnCd = 50; }
       e.y += (here + e.h / 2 - 2 - e.y) * 0.4;
       e.flipX = e.dir > 0;
       if (--e.cd <= 0) {
@@ -1312,17 +1366,17 @@
         if (!p.dead) Sprites.draw(c, 's4_maiden_plate', e.x + p.ox, e.y + p.oy, { frame: p.hp < p.max * 0.5 ? 1 : 0, flash: p.flash > 0 });
       }
       // chin cannon (aims at you)
-      const px = e.x - 27, py = e.y + 16;
+      const gx = e.x - 27, gy = e.y + 16;
       const ca = Math.cos(e.ang), sa = Math.sin(e.ang);
-      s4_bar(c, px, py, px + ca * 13, py + sa * 13, 4, '#0c0c18');
-      s4_bar(c, px, py, px + ca * 13, py + sa * 13, 2, '#7a8a9c');
-      s4_disc(c, px, py, 3, '#0c0c18');
-      s4_disc(c, px, py, 2, '#9eaac0');
+      s4_bar(c, gx, gy, gx + ca * 13, gy + sa * 13, 4, '#0c0c18');
+      s4_bar(c, gx, gy, gx + ca * 13, gy + sa * 13, 2, '#7a8a9c');
+      s4_disc(c, gx, gy, 3, '#0c0c18');
+      s4_disc(c, gx, gy, 2, '#9eaac0');
       const charging = e.charge > 0;
       if (charging && e.kind !== 'spikes') {
         c.fillStyle = (e.t >> 1) & 1 ? '#ffffff' : '#ff9424';
-        c.fillRect(Math.round(px + ca * 14) - 1, Math.round(py + sa * 14) - 1, 3, 3);
-        if (e.kind === 'bomb') Sprites.draw(c, 's4_bomb', px + ca * 12, py + sa * 12, { frame: (e.t >> 2) & 1 });
+        c.fillRect(Math.round(gx + ca * 14) - 1, Math.round(gy + sa * 14) - 1, 3, 3);
+        if (e.kind === 'bomb') Sprites.draw(c, 's4_bomb', gx + ca * 12, gy + sa * 12, { frame: (e.t >> 2) & 1 });
       }
       // belly tubes glow while a spike volley charges
       if (charging && e.kind === 'spikes' && (e.t >> 1) & 1) {
@@ -1385,6 +1439,8 @@
     draw(e, c) {
       const nme = 's4_flame_' + (e.o.size || 's');
       const sz = Sprites.size(nme);
+      const k = e.o.size === 'l' ? 2 : e.o.size === 'm' ? 1 : 0;
+      Sprites.draw(c, 's4_glow_' + k, e.x, e.y - sz.h / 2 + 2, { alpha: 0.2 + 0.06 * Math.sin(e.t * 0.2 + (e.wx | 0)) });
       Sprites.draw(c, nme, e.x, e.y - sz.h / 2 + 2, { frame: ((e.t >> 2) + (e.wx | 0)) & 3 });
     },
   };
@@ -1475,7 +1531,7 @@
 
     background: () =>
       Backgrounds.make([
-        { kind: 'gradient', stops: [[0, '#f2642c'], [0.16, '#d03c34'], [0.4, '#8c2456'], [0.7, '#481a5c'], [1, '#1a0c38']], steps: 22 },
+        { kind: 'gradient', stops: [[0, '#cc4a2a'], [0.16, '#aa2e34'], [0.4, '#78205a'], [0.7, '#42185c'], [1, '#1a0c38']], steps: 22 },
         { kind: 'stars', n: 60, speed: 0.03, drift: 0.02, ymin: 110, ymax: 200, seed: 9 },
         { kind: 'strip', build: farHang, period: 512, speed: 0.08 },
         { kind: 'ridge', top: true, color: '#7a2040', color2: '#5a1636', edge: '#f0703a', hMin: 16, hMax: 46, speed: 0.18, seed: 4, jag: 0.7 },
@@ -1537,10 +1593,12 @@
       wisp(970, { n: 6, gap: 12, at: 0.35, amp: 26, carry: 'last' });
       wisp(1040, { n: 5, gap: 13, at: 0.6, amp: 24, freq: 0.055 });
       S.ceil(1125, 's4_crawler', { dir: 1 });
+      S.ceil(1092, 's4_stal');
+      squad(1085, 'diver', { n: 3, gap: 22, at: 0.2, dy: 14 });
       wisp(1200, { n: 5, gap: 13, at: 0.4, amp: 26, carry: 'last' });
       S.ceil(1272, 's4_stal');
       squad(1290, 'diver', { n: 4, gap: 20, at: 0.15, dy: 12 });
-      S.ceil(1350, 's4_crawler', { dir: -1 });
+      S.ceil(1305, 's4_crawler', { dir: 1 });
 
       /* ---- C: hanging volcanoes (checkpoint 1540) ---- */
       S.ceil(1445, 'turret');
@@ -1549,13 +1607,13 @@
       wisp(1700, { n: 5, gap: 13, at: 0.3, amp: 24, shoot: 90 });
       wisp(1750, { n: 6, gap: 12, at: 0.5, amp: 26, carry: 'last' });
       S.ceil(1830, 's4_vent', { first: 70, every: 160, burst: 3 });
-      S.ceil(1866, 's4_crawler', { dir: 1 });
       S.ceil(1890, 'turret');
       wisp(1900, { n: 5, gap: 12, at: 0.4, amp: 30 });
       squad(1940, 'diver', { n: 4, gap: 18, at: 0.15, dy: 12 });
 
       /* ---- D: lava lake with geysers ---- */
-      S.ceil(2150, 's4_vent', { first: 50, every: 150, burst: 4 });
+      S.ceil(2150, 's4_vent', { first: 50, every: 150, burst: 4, aim: true });
+      S.ceil(2075, 'turret');
       wisp(2010, { n: 6, gap: 13, at: 0.5, amp: 24, carry: 'last' });
       wisp(2190, { n: 5, gap: 12, at: 0.4, amp: 30, shoot: 80 });
       squad(2110, 'spinner', { n: 5, gap: 12, dirY: 1, turnX: 140 });
@@ -1571,10 +1629,9 @@
       /* ---- E: final approach (checkpoint 3520) ---- */
       wisp(3400, { n: 5, gap: 12, at: 0.5, amp: 24, carry: 'last' });
       wisp(3670, { n: 5, gap: 13, at: 0.5, amp: 26, carry: 'last' });
-      S.ceil(3730, 's4_vent', { first: 40, every: 170, burst: 3 });
+      S.ceil(3730, 's4_vent', { first: 40, every: 240, burst: 3 });
       squad(3700, 'spinner', { n: 4, gap: 12, dirY: 1, turnX: 140 });
       wisp(3780, { n: 5, gap: 13, at: 0.45, amp: 24, carry: 'last', shoot: 100 });
-      S.ceil(3850, 'turret');
       wisp(3900, { n: 5, gap: 13, at: 0.5, amp: 20, carry: 'last' });
 
       S.boss(BOSS_X, 'bigcore', { level: 4 });

@@ -5,6 +5,28 @@
  * networks, wall-anchored tentacles you can cut apart, polyp pods
  * that burst into spores, blinking eye pods, leech swimmers and
  * sticky membranes. Mid-boss: the Tentacle Mass. Boss: Guardian Core.
+ *
+ * Layout (camera x): A gullet 0-400 (calm intro) - B tentacle garden
+ * 400-820 - C eye chamber 820-1200 - D throat with sticky membranes and
+ * squeeze valves 1200-1620 - quiet stretch - E mid-boss chamber 1840-2600
+ * (scroll slows to 0.55) - F gauntlet 2600-3240 - G recovery - boss arena.
+ * Checkpoints 0 / 820 / 1620 / 2600 / 3240.
+ *
+ * Enemies (all keys are prefixed s5_; spawn options in brackets):
+ *  s5_tentacle  wall-anchored chain of 5-10 segments, one hit box per segment
+ *               (recomputed every frame). Cutting a segment severs everything
+ *               beyond it. [n, fire (tip gun period), reach (stretches toward
+ *               the player), first, trigger, every, carry (tip drops a capsule),
+ *               sway, lean, sl, r0, r1]
+ *  s5_polyp     wall pod that bursts into slow, shootable spores [burst:
+ *               'ring' | 'aim' | 'bugs', n, carry]
+ *  s5_eye       floating blinking eye pod (invulnerable while shut) [cycle,
+ *               spread, amp, speed, carry]
+ *  s5_leech     sine-path swimmer [amp, freq, speed, carry]
+ *  s5_web       sticky membrane: harmless, drags the ship, swallows shots [len]
+ *  s5_mass      mid-boss: six severable arms + an eye that is exposed while it
+ *               spits spores or once every arm is gone [leaveX, homeX, eyeHp]
+ *  s5_pulse     invisible controller (wall rim pulse, glints, cilia)
  * ============================================================= */
 (function stage5() {
   /* ------------------------------------------------------------
@@ -1143,7 +1165,7 @@
   /* ------------------------------------------------------------
    * terrain profile
    * ------------------------------------------------------------ */
-  const BOSS_X = 3450;
+  const BOSS_X = 3510;
   const LEN = BOSS_X + W + 120;
 
   // [x, floor height, ceiling height, noise amplitude]
@@ -1167,8 +1189,8 @@
     [2900, 54, 58, 8],
     [3000, 58, 52, 8],
     [3200, 52, 46, 7],
-    [3300, 40, 36, 4],
-    [3400, 28, 26, 0],
+    [3360, 40, 36, 4],
+    [3460, 28, 26, 0],
     [LEN, 28, 26, 0],
   ];
   const s5_macro = (x) => {
@@ -1301,8 +1323,8 @@
     [2600, 255, 170, 150, 0.07],
     [2760, 90, 30, 170, 0.2],
     [3200, 90, 30, 170, 0.2],
-    [3300, 0, 0, 0, 0],
-    [3380, 190, 20, 60, 0.12],
+    [3320, 0, 0, 0, 0],
+    [3440, 190, 20, 60, 0.12],
     [LEN, 190, 20, 60, 0.12],
   ];
   function s5_tintAt(x) {
@@ -1750,6 +1772,7 @@
     checkpoints: [0, 820, 1620, 2600, 3240],
     onReset(g) {
       g.spawn('s5_pulse', { x: -60, y: -60 });
+      g.enemies.unshift(g.enemies.pop()); // drawn first: the rim glow and cilia stay behind every enemy
     },
 
     terrain: () => {
@@ -1831,7 +1854,7 @@
 
       /* ---- B: tentacle garden ---- */
       cei(450, 's5_tentacle', { n: 7, fire: 180 });
-      S.wave(470, 's5_leech', { n: 5, gap: 14, y: 92, amp: 20 });
+      S.wave(470, 's5_leech', { n: 6, gap: 12, y: 100, amp: 28, each: (i) => ({ phase: (i % 2) * Math.PI }) }); // braid
       gnd(510, 's5_tentacle', { n: 8, fire: 190, reach: true });
       cei(560, 's5_polyp');
       S.wave(560, 's5_leech', { n: 6, gap: 13, y: 130, amp: 26, carry: 'last' });
@@ -1844,14 +1867,14 @@
       S.wave(940, 's5_eye', { n: 1, y: 112 });
       gnd(1030, 's5_polyp');
       S.wave(1040, 's5_eye', { n: 2, gap: 40, y: 80, dy: 60 });
-      S.wave(1110, 's5_leech', { n: 6, gap: 13, y: 112, amp: 36 });
+      S.wave(1110, 's5_leech', { n: 6, gap: 11, y: 112, amp: 16, freq: 0.09, speed: 1.9 }); // fast wiggle
       cei(1130, 's5_tentacle', { n: 6, fire: 190 });
       S.wave(1150, 's5_eye', { n: 2, gap: 30, y: 70, dy: 80, spread: 0.45 });
       S.wave(1190, 's5_eye', { n: 1, y: 112, carry: true });
 
       /* ---- D: the throat, sticky membranes ---- */
       cei(1290, 's5_web', { len: 72 });
-      S.wave(1270, 's5_leech', { n: 5, gap: 14, y: 140, amp: 10 });
+      S.wave(1270, 's5_leech', { n: 5, gap: 16, y: 74, dy: 12, amp: 6 }); // descending line
       gnd(1335, 's5_tentacle', { n: 6, fire: 190 });
       gnd(1372, 's5_web', { len: 70 });
       cei(1395, 's5_polyp');
@@ -1876,7 +1899,7 @@
       /* ---- F: the gauntlet ---- */
       S.wave(2700, 's5_leech', { n: 5, gap: 14, y: 100, amp: 24, carry: 'last' });
       S.wave(2760, 's5_eye', { n: 2, gap: 40, y: 80, dy: 60 });
-      S.wave(2820, 's5_leech', { n: 6, gap: 12, y: 112, amp: 30, speed: 1.7 });
+      S.wave(2820, 's5_leech', { n: 6, gap: 13, y: 112, amp: 26, each: (i) => ({ phase: (i % 2) * Math.PI }) }); // braid
       gnd(2905, 's5_tentacle', { n: 8, fire: 190, reach: true }, 2900);
       cei(2950, 's5_tentacle', { n: 8, fire: 200, reach: true, first: 60 });
       gnd(2990, 's5_polyp', { burst: 'bugs' });
@@ -1890,10 +1913,13 @@
       gnd(3180, 's5_polyp');
 
       /* ---- G: recovery ---- */
-      S.wave(3345, 's5_leech', { n: 5, gap: 14, y: 100, amp: 24, carry: 'last' });
+      S.wave(3340, 's5_leech', { n: 5, gap: 14, y: 100, amp: 24, carry: 'last' });
       S.wave(3360, 's5_eye', { n: 1, y: 112 });
-      S.wave(3375, 's5_leech', { n: 5, gap: 14, y: 140, amp: 24, carry: 'last' });
-      S.wave(3400, 's5_leech', { n: 4, gap: 14, y: 90, amp: 20, carry: 'last' });
+      S.wave(3372, 's5_leech', { n: 5, gap: 16, y: 150, dy: -14, amp: 6, carry: 'last' }); // rising line
+      S.wave(3410, 's5_leech', { n: 4, gap: 14, y: 90, amp: 20, carry: 'last' });
+      S.wave(3440, 's5_eye', { n: 1, y: 100 });
+      S.wave(3452, 's5_leech', { n: 4, gap: 14, y: 125, amp: 26, carry: 'last' });
+      S.wave(3488, 's5_leech', { n: 4, gap: 14, y: 105, amp: 22, carry: 'last' });
 
       S.boss(BOSS_X, 'bigcore', { level: 5 });
     },

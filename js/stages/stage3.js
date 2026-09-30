@@ -5,6 +5,14 @@
  * Colossal moai heads are SOLID TERRAIN (silhouettes are stamped into the
  * collision mask in shapes(), shaded in decorate()).  Every head owns a
  * ghost emitter `s3_mouth` that spits shootable ion rings.
+ *
+ * MAP (camX)   0 shore, gulls, first big statue
+ *            340-725 the first ring spitters       830 checkpoint
+ *           1095-1305 head field + overhang       1610 checkpoint
+ *           1690-2310 quarry cave (statues hang from the ceiling and stand on the floor)
+ *           2330 checkpoint   2440-2880 Mother and Child levitating over her ahu
+ *           3090-3230 small statue + the colossus   3330 checkpoint (3 capsule carriers follow)
+ *           3700 Guardian Core (level 3) on a calm beach at twilight
  * ============================================================= */
 (function stage3() {
   /* ---------- tiny helpers ---------- */
@@ -663,7 +671,9 @@
   /* =============================================================
    * WORLD LAYOUT: where the statues stand
    * k 'f' = stands on the floor, 'c' = hangs from the ceiling; wx = axis (world x);
-   * h = statue height above its base; pat = ring pattern(s): aim | twin | fan | fan5 | burst | straight.
+   * h = statue height above its base; pat = ring pattern(s): aim | twin | fan | fan5 | burst | straight;
+   * rate = base frames between volleys (scaled by difficulty), first = frames before the first volley,
+   * spd = ring speed, hat = topknot (pukao), chip = weathered silhouette (top | nose | chin).
    * ============================================================= */
   const S3_BOSS_X = 3700;
   const S3_LEN = S3_BOSS_X + W + 120;
@@ -689,8 +699,8 @@
     { k: 'c', wx: 2160, h: 56, seed: 44, pat: 'burst', rate: 210, first: 50 },
     { k: 'f', wx: 2245, h: 54, hat: 1, seed: 47, pat: ['fan', 'aim'], rate: 220, first: 20 },
     // beyond the mother: a small statue and the colossus
-    { k: 'f', wx: 3045, h: 48, seed: 55, chip: 'top', pat: ['aim', 'burst'], rate: 200, first: 20 },
-    { k: 'f', wx: 3180, h: 80, hat: 1, seed: 51, pat: ['fan5', 'aim'], rate: 250, first: 40 }, // the colossus
+    { k: 'f', wx: 3090, h: 48, seed: 55, chip: 'top', pat: ['aim', 'burst'], rate: 200, first: 20 },
+    { k: 'f', wx: 3230, h: 76, hat: 1, seed: 51, pat: ['fan5', 'aim'], rate: 250, first: 40 }, // the colossus
   ];
 
   let s3_laid = null;
@@ -702,7 +712,7 @@
       const base = hd.base !== undefined ? hd.base : flip ? S3_CL : S3_FL;
       const left = hd.wx - info.ax;
       const top = flip ? base : H - base - info.h;
-      Sprites.fromCanvases('s3_head' + i, [info.art]);
+      Sprites.fromCanvases('s3_head' + i, [info.art]); // (registered so G.gallery('s3_') can show them)
       const mx = left + info.mouth.x - 6, my = top + info.mouth.y;
       return {
         hd, info, left, top, base, mx, my,
@@ -759,6 +769,25 @@
     }
   }
 
+
+  /** small boulders embedded just under the floor surface (breaks up the repeating rock tile) */
+  function s3_paintPebbles(g, T, x0, x1) {
+    const rng = makeRng(321);
+    for (let x = x0; x < x1; x += 22 + Math.floor(rng() * 26)) {
+      const y0 = T.floorTop(x);
+      if (y0 >= H - 24 || !T.solid(x, y0 + 14)) continue;
+      const rx = 2 + rng() * 3.4, ry = 1.4 + rng() * 1.6;
+      const cy = y0 + 8 + Math.floor(rng() * 8);
+      for (let yy = Math.floor(cy - ry); yy <= Math.ceil(cy + ry); yy++)
+        for (let xx = Math.floor(x - rx); xx <= Math.ceil(x + rx); xx++) {
+          const a = (xx + 0.5 - x) / rx, b = (yy + 0.5 - cy) / ry, d = a * a + b * b;
+          if (d > 1 || !T.solid(xx, yy)) continue;
+          g.fillStyle = d > 0.72 ? '#3a2214' : a + b < -0.5 ? '#b48350' : a + b > 0.5 ? '#6a4128' : '#8c5e3a';
+          g.fillRect(xx, yy, 1, 1);
+        }
+    }
+  }
+
   function s3_terrain() {
     const laid = s3_layout();
     const nz = (x0, x1, base, amp, seed) => ({ type: 'noise', x0, x1, base, amp, scale: 58, seed, edge: 45 });
@@ -787,7 +816,7 @@
         { type: 'flat', x0: S3_AHU.x0, x1: S3_AHU.x1, h: S3_AHU.h },
         { type: 'flat', x0: S3_AHU.x1, x1: S3_AHU.x1 + 36, h: 38 },
         { type: 'hill', x: 2390, w: 80, h: 44, shape: 'cos' },
-        { type: 'hill', x: 2985, w: 60, h: 42, shape: 'cos' },
+        { type: 'hill', x: 2990, w: 60, h: 42, shape: 'cos' },
         nz(3250, 3440, 32, 6, 41),
         // calm arena
         { type: 'slope', x0: 3440, x1: 3520, h0: S3_FL, h1: 34 },
@@ -810,6 +839,7 @@
         for (const L of laid) g.drawImage(L.info.mask, L.left, L.top);
       },
       decorate(g, T) {
+        s3_paintPebbles(g, T, 20, S3_LEN - 300);
         s3_paintSand(g, T, 0, 660);
         s3_paintSand(g, T, 3380, S3_LEN);
         s3_paintAhu(g, T, S3_AHU.x0 - 36, S3_AHU.x1 + 36, H - S3_AHU.h);
@@ -892,10 +922,10 @@
         d.rect(Math.round(cx - 0.23 * h), Math.round(base - h - 0.14 * h) + 1, Math.round(0.46 * h), Math.round(0.14 * h), SIL);
       }
     };
+    // (the sun slides through strip x 92..314 during the stage: keep that range free of statues)
     [[52, 18, 1], [80, 24, 0], [108, 17, 1]].forEach(([x, h, hat]) => statue(x, h, hat));
-    for (let k = 0; k < 6; k++) statue(206 + k * 14, 13 + (k % 2), k % 3 === 1);
-    [[384, 27, 1], [420, 21, 0]].forEach(([x, h, hat]) => statue(x, h, hat));
-    statue(482, 14, 0);
+    for (let k = 0; k < 6; k++) statue(340 + k * 14, 13 + (k % 2), k % 3 === 1);
+    [[448, 27, 1], [486, 21, 0]].forEach(([x, h, hat]) => statue(x, h, hat));
     return d.c;
   }
 
@@ -1067,9 +1097,9 @@
   /* =============================================================
    * ENEMIES
    * ============================================================= */
-  // frames of guaranteed calm after every (re)start at a checkpoint (measured in camera pixels)
+  // guaranteed calm after every (re)start at a checkpoint: statues, totems and hoppers stay passive for 215 camera px (~5.5 s)
   let s3_resetCam = 0;
-  const s3_graceOver = () => G.camX - s3_resetCam >= 190;
+  const s3_graceOver = () => G.camX - s3_resetCam >= 215;
 
   /**
    * one ion ring: shootable (hp 1), slow, 8x8 hit box for an 11 px sprite.
@@ -1347,7 +1377,10 @@
     },
   };
 
-  /* ---- s3_mother: mid-boss "Mother and Child" (does not stop the scroll) ---- */
+  /* ---- s3_mother: mid-boss "Mother and Child".  A levitating giant that holds her screen position over
+   *      the ahu (a terrain-anchored one would scroll into the ship), fires ring volleys and lets small
+   *      terracotta "children" roll out of her mouth.  The scroll never stops.  Weak points: the forehead
+   *      crystal (always) and the mouth (while it is open); the stone body deflects shots. ---- */
   function s3_motherVolley(e, k) {
     if (!G.canFire(e) || !G.player.alive) return;
     const x = e.x + S3_MOTHER.spawn.ox, y = e.y + S3_MOTHER.spawn.oy;
@@ -1365,44 +1398,63 @@
     G.spawn('s3_child', { x: e.x + S3_MOTHER.spawn.ox - 2, y: e.y + S3_MOTHER.spawn.oy + 2, vx: -1.35 - rnd(0, 0.35), vy: -2.4 });
   }
   ENEMIES.s3_mother = {
-    w: S3_MOTHER.w, h: S3_MOTHER.h, hp: 34, score: 4000, attach: 'floor', expl: 'l', sink: 1,
+    w: S3_MOTHER.w, h: S3_MOTHER.h, hp: 34, score: 4000, expl: 'l',
     init(e) {
       const part = (name, geo, vuln) => Object.assign({ name, hp: 99999, max: 99999, vuln, expl: 'm', score: 0 }, geo);
       // front-most (vulnerable) parts first: the crystal, then the mouth (only while it is open)
       e.parts = [part('gem', S3_MOTHER.gem, true), part('mouth', S3_MOTHER.mouth, false), part('hat', S3_MOTHER.hat, false), part('skull', S3_MOTHER.skull, false), part('base', S3_MOTHER.base, false)];
+      e.hx = 190; // hover position (screen): she levitates over her ahu and never scrolls into you
+      e.by = 124;
+      e.age = 0;
       e.act = false;
+      e.leave = false;
       e.ct = 0;
       e.cyc = 300;
       e.mf = 0;
+      e.vx = -1.7;
     },
     update(e) {
-      if (e.act && e.x < -6) return; // scrolled away: stop the show
+      e.age++;
+      if (e.leave) {
+        e.vx = 1.3;
+        e.vy = -0.4;
+        return;
+      }
       if (!e.act) {
-        if (e.x < W - 34 && s3_graceOver()) {
+        // glide in from the right edge, easing into the hover position
+        e.vx = -Math.max(0.3, (e.x - e.hx) * 0.03);
+        e.y = e.by + Math.sin(e.age * 0.03) * 4;
+        if (e.x <= e.hx + 1 && s3_graceOver()) {
           e.act = true;
           e.ct = 0;
-          e.cyc = Math.max(250, Math.round(G.fireDelay(300)));
+          e.t0 = e.age;
+          e.cyc = Math.max(280, Math.round(G.fireDelay(320)));
         }
         return;
       }
+      e.vx = 0;
+      e.vy = 0;
+      e.x = e.hx + Math.sin((e.age - e.t0) * 0.014) * 14;
+      e.y = e.by + Math.sin((e.age - e.t0) * 0.022) * 6;
+      if (e.age > 780) e.leave = true; // long enough for a basic ship; then she withdraws before the next statues arrive
       const c = ++e.ct;
       e.parts[1].vuln = e.mf >= 2;
       switch (c) {
         case 36: e.mf = 1; break;
         case 44: e.mf = 2; sfx('coreOpen'); break;
         case 56: s3_motherVolley(e, 0); break;
-        case 108: s3_motherVolley(e, 1); break;
-        case 140: e.mf = 3; break;
-        case 152: s3_motherChild(e); break;
-        case 196: s3_motherChild(e); break;
-        case 226: e.mf = 2; break;
-        case 234: e.mf = 1; break;
-        case 240: e.mf = 0; sfx('coreClose'); break;
+        case 132: s3_motherVolley(e, 1); break;
+        case 160: e.mf = 3; break;
+        case 172: s3_motherChild(e); break;
+        case 214: s3_motherChild(e); break;
+        case 246: e.mf = 2; break;
+        case 254: e.mf = 1; break;
+        case 260: e.mf = 0; sfx('coreClose'); break;
         default: break;
       }
       if (c >= e.cyc) {
         e.ct = 0;
-        e.cyc = Math.max(250, Math.round(G.fireDelay(300)));
+        e.cyc = Math.max(280, Math.round(G.fireDelay(320)));
       }
     },
     onPartHurt(e, p, dmg) {
@@ -1411,10 +1463,8 @@
       if (e.hp <= 0) G.kill(e);
     },
     onDeath(e) {
-      const wx = e.wx;
-      for (let i = 0; i < 6; i++) {
-        G.later(3 + i * 6, () => G.explode(wx - G.camX + rnd(-15, 15), e.y + rnd(-24, 24), i % 2 ? 'm' : 's', { scroll: true, quiet: i % 2 === 0 }));
-      }
+      const x = e.x, y = e.y;
+      for (let i = 0; i < 6; i++) G.later(3 + i * 6, () => G.explode(x + rnd(-15, 15), y + rnd(-24, 24), i % 2 ? 'm' : 's', { quiet: i % 2 === 0 }));
       for (const o of G.enemies) {
         if (!o.dead && o.type === 's3_child') {
           o.dead = true;
@@ -1424,6 +1474,16 @@
     },
     draw(e, c) {
       const g = e.parts[0];
+      // levitation glow under the base
+      const ex = Math.round(e.x), by = Math.round(e.y + S3_MOTHER.h / 2);
+      const pulse = 0.5 + 0.25 * Math.sin(e.t * 0.12);
+      for (let k = 0; k < 4; k++) {
+        c.globalAlpha = pulse * (0.55 - k * 0.12);
+        c.fillStyle = k < 2 ? '#a8f8ff' : '#48ecf4';
+        const hw = 15 - k * 3;
+        c.fillRect(ex - hw, by + 1 + k, hw * 2, 1);
+      }
+      c.globalAlpha = 1;
       Sprites.draw(c, 's3_mother', e.x, e.y, { frame: e.mf, flash: g.flash > 0 || e.parts[1].flash > 0 });
       const gx = Math.round(e.x + S3_MOTHER.gemc.ox - 0.5), gy = Math.round(e.y + S3_MOTHER.gemc.oy - 0.5);
       const ph = e.t % 70;
@@ -1445,7 +1505,7 @@
     music: 'stage3',
     bossMusic: 'boss',
     scroll: 0.65,
-    scrollMap: [[2440, 0.48], [2960, 0.65]], // slower around the mother so a basic ship has time to hit her
+    scrollMap: [[2440, 0.48], [2880, 0.65]], // slower around the mother so a basic ship has time to hit her
     bossX: S3_BOSS_X,
     checkpoints: [0, 830, 1610, 2330, 3330],
     terrain: () => s3_terrain(),
@@ -1472,41 +1532,52 @@
       /* ---- B. the first ring spitters ---- */
       S.wave(450, 's3_bird', { n: 5, gap: 14, y: 96, amp: 32, carry: 'last' });
       S.wave(560, 'spinner', { n: 4, gap: 12, y: 148, dirY: -1, turnX: 140 });
+      S.wave(630, 's3_bird', { n: 4, gap: 16, y: 66, amp: 26 });
+      S.wave(700, 's3_bird', { n: 3, gap: 36, y: 34, mode: 'swoop' });
       S.ground(805, 's3_hopper', { carry: true });
 
       /* ---- C. head field with an overhang ---- */
       S.wave(930, 's3_bird', { n: 5, gap: 14, y: 86, amp: 26 });
       S.ground(975, 's3_tiki');
       S.wave(1000, 's3_bird', { n: 4, gap: 18, y: 100, amp: 14, carry: 'last' });
+      S.wave(1130, 'diver', { n: 3, gap: 22, y: 96, dy: 12 });
       S.wave(1240, 'spinner', { n: 5, gap: 12, y: 120, dirY: 1, turnX: 130 });
 
       /* ---- D. open ground before the cave ---- */
       S.wave(1400, 's3_bird', { n: 5, gap: 14, y: 90, amp: 30, carry: 'last' });
       S.ground(1590, 's3_hopper');
       S.wave(1450, 'diver', { n: 3, gap: 24, y: 50, dy: 30 });
+      S.wave(1435, 'spinner', { n: 4, gap: 12, y: 64, dirY: 1, turnX: 140 });
+      S.wave(1540, 's3_bird', { n: 4, gap: 16, y: 120, amp: 22 });
       S.ground(1560, 's3_tiki', { burst: true });
 
       /* ---- E. the quarry cave ---- */
-      S.wave(1700, 's3_bird', { n: 4, gap: 16, y: 110, amp: 20, carry: 'last' });
+      S.wave(1730, 's3_bird', { n: 4, gap: 16, y: 110, amp: 18, carry: 'last' });
+      S.wave(1790, 's3_bird', { n: 3, gap: 18, y: 106, amp: 10 });
       S.wave(1900, 's3_bird', { n: 4, gap: 16, y: 108, amp: 18 });
+      S.wave(1980, 's3_bird', { n: 3, gap: 18, y: 112, amp: 10 });
       S.wave(2050, 's3_bird', { n: 5, gap: 14, y: 108, amp: 16, carry: 'last' });
+      S.wave(2150, 's3_bird', { n: 3, gap: 18, y: 106, amp: 12 });
 
       /* ---- F. approach and Mother & Child ---- */
       S.ground(2520, 's3_tiki');
       S.wave(2440, 's3_bird', { n: 4, gap: 16, y: 84, amp: 26, carry: 'last' });
       S.wave(2405, 'spinner', { n: 4, gap: 12, y: 50, dirY: 1, turnX: 150 });
       S.banner(2450, ['MOTHER AND CHILD']);
-      S.ground(2760, 's3_mother', { carry: true });
+      S.at(2440, () => G.spawn('s3_mother', { x: W + 34, y: 124, carry: true }));
       S.wave(2900, 's3_bird', { n: 5, gap: 14, y: 96, amp: 28, carry: 'last' });
 
       /* ---- G. beyond the mother ---- */
+      S.wave(2960, 's3_bird', { n: 4, gap: 16, y: 64, amp: 24 });
       S.wave(3020, 's3_bird', { n: 4, gap: 30, y: 34, mode: 'swoop' });
+      S.wave(3100, 'diver', { n: 3, gap: 22, y: 70, dy: 16 });
       S.wave(3160, 'spinner', { n: 5, gap: 12, y: 140, dirY: -1, turnX: 130, carry: 'last' });
 
       /* ---- H. last checkpoint at 3330: recover power-ups before the Guardian ---- */
-      S.wave(3450, 's3_bird', { n: 5, gap: 14, y: 84, amp: 26, carry: 'last' });
-      S.wave(3540, 'spinner', { n: 5, gap: 12, y: 60, dirY: 1, turnX: 130, carry: 'last' });
-      S.wave(3620, 's3_bird', { n: 5, gap: 14, y: 130, amp: 24, carry: 'last' });
+      // (gulls here are a bit faster so the last squad has left the screen before the Guardian arrives)
+      S.wave(3440, 's3_bird', { n: 5, gap: 14, y: 80, amp: 22, speed: 1.5, carry: 'last' });
+      S.wave(3485, 'spinner', { n: 5, gap: 12, y: 56, dirY: 1, turnX: 130, carry: 'last' });
+      S.wave(3525, 's3_bird', { n: 5, gap: 14, y: 136, amp: 20, speed: 1.8, carry: 'last' });
 
       S.boss(S3_BOSS_X, 'bigcore', { level: 3 });
     },
