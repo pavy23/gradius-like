@@ -136,34 +136,42 @@
     bossMusic: 'boss',
     scroll: 0.6,
     bossX: BOSS_X,
-    checkpoints: [0, 850, 1750, 2500, 3300],
+    checkpoints: [0, 850, 1650, 2500, 3300],
 
     terrain: () => ({
       length: BOSS_X + W + 120,
       floor: [
-        { type: 'slope', x0: 380, x1: 470, h0: 0, h1: 30 },
-        { type: 'flat', x0: 470, x1: 1010, h: 30 },
-        { type: 'noise', x0: 420, x1: 1010, base: 30, amp: 14, scale: 70, seed: 11, edge: 60 },
-        { type: 'hill', x: 640, w: 110, h: 58, shape: 'round' },
-        { type: 'hill', x: 880, w: 90, h: 50, shape: 'cos' },
-        { type: 'volcano', x: 1180, w: 170, h: 96, crater: { w: 32, d: 14 } },
+        { type: 'slope', x0: 380, x1: 470, h0: 0, h1: 34 },
+        { type: 'flat', x0: 470, x1: 1010, h: 34 },
+        { type: 'noise', x0: 420, x1: 1010, base: 34, amp: 20, scale: 60, seed: 11, edge: 60 },
+        { type: 'hill', x: 610, w: 120, h: 66, shape: 'round' },
+        { type: 'hill', x: 770, w: 80, h: 58, shape: 'tri' },
+        { type: 'hill', x: 910, w: 110, h: 68, shape: 'cos' },
+        { type: 'volcano', x: 1190, w: 190, h: 106, crater: { w: 34, d: 14 } },
         { type: 'flat', x0: 1010, x1: 1900, h: 30 },
-        { type: 'hill', x: 1480, w: 130, h: 64, shape: 'round' },
-        { type: 'volcano', x: 1730, w: 210, h: 112, crater: { w: 38, d: 16 } },
-        { type: 'noise', x0: 1880, x1: 2520, base: 40, amp: 16, scale: 50, seed: 12, edge: 50 },
-        { type: 'flat', x0: 1900, x1: 2520, h: 30 },
-        { type: 'volcano', x: 2780, w: 280, h: 124, crater: { w: 46, d: 18 } },
+        { type: 'noise', x0: 1010, x1: 1900, base: 32, amp: 14, scale: 80, seed: 14, edge: 60 },
+        { type: 'hill', x: 1400, w: 90, h: 58, shape: 'round' },
+        { type: 'volcano', x: 1560, w: 150, h: 90, crater: { w: 28, d: 12 } },
+        { type: 'volcano', x: 1800, w: 220, h: 118, crater: { w: 40, d: 16 } },
+        { type: 'noise', x0: 1900, x1: 2520, base: 42, amp: 18, scale: 50, seed: 12, edge: 50 },
+        { type: 'flat', x0: 1900, x1: 2520, h: 32 },
+        { type: 'volcano', x: 2780, w: 300, h: 128, crater: { w: 46, d: 18 } },
         { type: 'flat', x0: 2500, x1: 3400, h: 30 },
-        { type: 'noise', x0: 3000, x1: 3400, base: 30, amp: 10, scale: 60, seed: 13, edge: 50 },
+        { type: 'noise', x0: 3000, x1: 3400, base: 34, amp: 16, scale: 60, seed: 13, edge: 50 },
+        { type: 'hill', x: 3130, w: 100, h: 60, shape: 'tri' },
+        { type: 'hill', x: 3270, w: 140, h: 52, shape: 'cos' },
         { type: 'slope', x0: 3400, x1: 3480, h0: 30, h1: 32 },
         { type: 'flat', x0: 3480, x1: BOSS_X + W + 120, h: 32 },
       ],
       ceil: [
-        { type: 'noise', x0: 1900, x1: 2520, base: 44, amp: 14, scale: 44, seed: 21, edge: 70 },
+        { type: 'noise', x0: 1930, x1: 2520, base: 44, amp: 14, scale: 44, seed: 21, edge: 70 },
         { type: 'hill', x: 2010, w: 34, h: 66, shape: 'tri' },
         { type: 'hill', x: 2130, w: 40, h: 74, shape: 'tri' },
         { type: 'hill', x: 2290, w: 30, h: 62, shape: 'tri' },
         { type: 'hill', x: 2400, w: 36, h: 72, shape: 'tri' },
+        { type: 'noise', x0: 3020, x1: 3230, base: 20, amp: 12, scale: 40, seed: 31, edge: 60 },
+        { type: 'hill', x: 3090, w: 30, h: 50, shape: 'tri' },
+        { type: 'hill', x: 3170, w: 26, h: 44, shape: 'tri' },
       ],
       skin: {
         kind: 'rock',
@@ -201,7 +209,7 @@
       S.wave(860, 'spinner', { n: 6, gap: 12, y: 60, dirY: 1, carry: 'last' });
 
       // -- volcanoes --
-      S.ground(1180, 'crater', { every: 130, burst: 4 });
+      S.ground(1190, 'crater', { every: 130, burst: 4 });
       S.wave(1020, 'wave', { n: 6, gap: 13, y: 90, amp: 30, carry: 'last' });
       S.ground(1090, 'turret', { burst: true });
       S.ground(1280, 'turret');
@@ -210,8 +218,9 @@
       S.ground(1362, 'rocket');
       S.wave(1330, 'spinner', { n: 5, gap: 12, y: 150, dirY: -1, carry: 'last' });
       S.ground(1480, 'walker', { dir: -1 });
-      S.ground(1560, 'hatch', { spawn: 'bug', count: 3, carry: true });
-      S.ground(1730, 'crater', { every: 115, burst: 5 });
+      S.ground(1400, 'hatch', { spawn: 'bug', count: 3, carry: true });
+      S.ground(1560, 'crater', { every: 150, burst: 3 });
+      S.ground(1800, 'crater', { every: 115, burst: 5 });
       S.wave(1560, 'wave', { n: 6, gap: 12, y: 96, amp: 34 });
       S.ground(1640, 'turret');
       S.wave(1800, 'diver', { n: 4, gap: 20, y: 60, dy: 30, carry: 'last' });

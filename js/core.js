@@ -56,7 +56,7 @@ const Store = {
  * Call Input.update() once per simulation step.
  * ------------------------------------------------------------------ */
 const Input = (() => {
-  const ACTIONS = ['left', 'right', 'up', 'down', 'fire', 'power', 'start', 'pause', 'mute', 'back', 'quit'];
+  const ACTIONS = ['left', 'right', 'up', 'down', 'fire', 'power', 'start', 'pause', 'mute', 'back', 'quit', 'flash'];
   const KEYMAP = {
     left: ['ArrowLeft', 'KeyA'],
     right: ['ArrowRight', 'KeyD'],
@@ -69,6 +69,7 @@ const Input = (() => {
     mute: ['KeyM'],
     back: ['Escape', 'Backspace'],
     quit: ['KeyQ'],
+    flash: ['KeyV'],
   };
   const PREVENT = new Set([
     'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space', 'Enter',

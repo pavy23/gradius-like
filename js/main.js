@@ -19,8 +19,9 @@ window.addEventListener('load', () => {
   window.addEventListener('keydown', (e) => {
     if (e.code !== 'KeyF' || e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
     try {
-      if (document.fullscreenElement) document.exitFullscreen();
-      else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
+      // may be refused (iframes, some browsers): swallow the rejection
+      const r = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen && document.documentElement.requestFullscreen();
+      if (r && r.catch) r.catch(() => {});
     } catch (err) { /* ignore */ }
   });
 });

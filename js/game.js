@@ -131,6 +131,7 @@ const G = {
   banner: null,
   toastMsg: '',
   toastT: 0,
+  reduceFlash: false,
   shake: 0,
   flash: 0,
   rank: 0,
@@ -157,6 +158,7 @@ const G = {
     this.player = new Player();
     STAGES.sort((a, b) => a.id - b.id);
     Input.init();
+    this.reduceFlash = Store.get('nova.noflash', '0') === '1';
 
     const q = new URLSearchParams(location.search);
     if (q.get('god') === '1') this.god = true;
@@ -173,6 +175,10 @@ const G = {
     };
     window.addEventListener('keydown', unlock);
     window.addEventListener('pointerdown', unlock);
+    // auto-pause when the window loses focus (real play only, not in scripted tests)
+    window.addEventListener('blur', () => {
+      if (!(q.get('manual') === '1') && this.mode === 'play') this.setMode('paused');
+    });
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
         if (this.mode === 'play') this.setMode('paused');
@@ -236,6 +242,11 @@ const G = {
       try {
         if (typeof Sound !== 'undefined') this.toast(Sound.toggleMute() ? 'SOUND OFF' : 'SOUND ON');
       } catch (e) { /* ignore */ }
+    }
+    if (Input.pressed.flash) {
+      this.reduceFlash = !this.reduceFlash;
+      Store.set('nova.noflash', this.reduceFlash ? '1' : '0');
+      this.toast(this.reduceFlash ? 'FLASH EFFECTS OFF' : 'FLASH EFFECTS ON');
     }
     if (this.toastT > 0) this.toastT--;
     this.frame++;
@@ -940,7 +951,7 @@ const G = {
       }
     }
     c.restore();
-    if (this.flash > 0) {
+    if (this.flash > 0 && !this.reduceFlash) {
       c.globalAlpha = Math.min(1, this.flash / 6);
       c.fillStyle = '#fff';
       c.fillRect(0, 0, W, H);
@@ -1044,7 +1055,7 @@ const G = {
 
     // WARNING
     if (this.bossPhase === 'warn') {
-      const on = ((this.bossT / 12) | 0) % 2 === 0;
+      const on = this.reduceFlash || ((this.bossT / 12) | 0) % 2 === 0;
       const y = 92;
       c.fillStyle = 'rgba(120,0,0,0.55)';
       c.fillRect(0, y - 6, W, 34);
@@ -1094,6 +1105,16 @@ const MODES = {
         this.diff = DIFFS[this.diffKey];
         sfx('select');
       }
+      if (STAGES.length > 1) {
+        if (Input.pressed.up) {
+          this.startStage = (this.startStage + STAGES.length - 1) % STAGES.length;
+          sfx('select');
+        }
+        if (Input.pressed.down) {
+          this.startStage = (this.startStage + 1) % STAGES.length;
+          sfx('select');
+        }
+      }
       if (Input.pressed.start && this.modeT > 10) {
         sfx('start');
         this.startGame();
@@ -1106,7 +1127,7 @@ const MODES = {
       this.titleBg.draw(c, 0, this.frame);
       const t = this.frame;
       // ship cruising
-      const sx = 128 + Math.sin(t * 0.02) * 70, sy = 176 + Math.sin(t * 0.035) * 8;
+      const sx = 128 + Math.sin(t * 0.02) * 100, sy = 13 + Math.sin(t * 0.035) * 3;
       Sprites.draw(c, 'flame', sx - 17, sy, { frame: (t >> 1) & 1 });
       Sprites.draw(c, 'ship', sx, sy, { frame: 0 });
       // logo
@@ -1114,11 +1135,16 @@ const MODES = {
       PixFont.text(c, 'NOVA', W / 2, 30, { align: 'center', scale: 5, rows, outline: '#0a0a30', spacing: 2 });
       PixFont.text(c, 'LANCER', W / 2, 72, { align: 'center', scale: 5, rows: ['#fff6c8', '#ffe270', '#ffb030', '#ff7820', '#d84018', '#a02010', '#601010'], outline: '#2a0808', spacing: 2 });
       PixFont.text(c, 'HORIZONTAL SHOOTER', W / 2, 112, { align: 'center', color: '#9eb4ff', shadow: '#000' });
-      if (((t / 30) | 0) % 2 === 0) PixFont.text(c, 'PRESS START', W / 2, 140, { align: 'center', scale: 2, color: '#ffffff', outline: '#000' });
-      PixFont.text(c, '< ' + this.diff.name + ' >', W / 2, 164, { align: 'center', color: '#ffe646', shadow: '#000' });
-      PixFont.text(c, 'HI ' + this.pad(this.hi, 7), W / 2, 192, { align: 'center', color: '#ffffff', shadow: '#000' });
+      if (((t / 30) | 0) % 2 === 0) PixFont.text(c, 'PRESS START', W / 2, 130, { align: 'center', scale: 2, color: '#ffffff', outline: '#000' });
+      PixFont.text(c, '< ' + this.diff.name + ' >', W / 2, 154, { align: 'center', color: '#ffe646', shadow: '#000' });
+      if (STAGES.length > 1) {
+        const st = STAGES[this.startStage] || STAGES[0];
+        PixFont.text(c, 'STAGE ' + st.id + '  ' + st.name, W / 2, 166, { align: 'center', color: '#8cd8ff', shadow: '#000' });
+        PixFont.text(c, 'UP/DOWN: STAGE   LEFT/RIGHT: LEVEL', W / 2, 176, { align: 'center', font: '3x5', color: '#8090c8' });
+      }
+      PixFont.text(c, 'HI ' + this.pad(this.hi, 7), W / 2, 188, { align: 'center', color: '#ffffff', shadow: '#000' });
       PixFont.text(c, 'ARROWS/WASD:MOVE  Z/SPACE:SHOT  X/SHIFT:POWER UP', W / 2, 203, { align: 'center', font: '3x5', color: '#8090c8' });
-      PixFont.text(c, 'P:PAUSE  M:MUTE  F:FULLSCREEN  ENTER OR CLICK:START', W / 2, 211, { align: 'center', font: '3x5', color: '#8090c8' });
+      PixFont.text(c, 'P:PAUSE  M:MUTE  F:FULLSCREEN  V:FLASH  ENTER/CLICK:START', W / 2, 211, { align: 'center', font: '3x5', color: '#8090c8' });
     },
   },
 
