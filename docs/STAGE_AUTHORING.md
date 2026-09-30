@@ -202,25 +202,38 @@ unpause tentacle cellPop electric stomp warp`. Music tracks: `stage1..stage7`, `
 * The stage must be beatable without upgrades and comfortable with them; the boss must have a readable
   pattern and a punishing-but-fair tempo.
 
-## 9. Testing tools (in the session scratchpad; copy them, don't edit the shared originals)
+## 9. Testing tools (all inside the repo)
 
-`SP=/tmp/claude-0/-home-user-gradius-like/f6e45177-51ba-5a36-bde5-8a08ec06bd25/scratchpad`
+* **Design lint** — open the game and run `G.lint(stageIndex)` in the console (index is 0-based in `STAGES`).
+  It dry-runs the stage script up to the boss and reports enemies spawning inside terrain, anchored enemies without
+  a surface, corridors or free vertical runs narrower than 84 px, unsafe checkpoints, too few / too sparse capsule
+  carriers, unknown enemy types and missing sprites. A finished stage prints no issues.
+* **Headless regression test** (needs Playwright + Chromium): `node tools/smoke-test.js`
+  1. lints every stage, 2. plays the whole game with an invulnerable bot (must reach the ending),
+  3. plays it again with a mortal look-ahead bot (`tools/bot.js`) and reports deaths per stage / causes.
+  Options: `--lint`, `--strict` (the mortal bot must clear too), `--from N`, `--url <file-or-url>`.
+  The bot is an autopilot, not a human: it dodges bullets by short-horizon prediction, so a stage that it clears has
+  no unavoidable hits, but human difficulty is higher. It cannot foresee growing hit boxes (geysers) or read telegraphs.
+* **URL parameters**: `?stage=N` (start at the N-th registered stage, 1-based), `&god=1` (invulnerable), `&diff=easy|normal|hard`,
+  `&debug=1` (entity counters), `&manual=1` (the page does not start its own loop; tests call `G.step()` / `G.render()`).
+* **Scripting the page** (from Playwright or the console): `G.step()` advances one frame (call `G.render()` before a
+  screenshot); `G.resetWorld(camX)` + `G.player.respawn(false)` teleports to a scroll position; `G.player.speedLv = 5;
+  G.player.laser = true; G.player.options = 4;` grants upgrades; `Input.setVirtual('fire', true)` presses keys;
+  `G.gallery('prefix')` draws a sprite sheet; `Math.random` can be replaced by a seeded generator for reproducible runs.
+* Always look at screenshots of every section, every enemy type and each boss phase (contact sheets of a whole stage
+  are easy to render by drawing `G.bg` + `G.terrain` for successive `camX` values). Check that nothing overlaps the HUD
+  unreadably, hit boxes match sprites, and the stage reads well at 1x scale.
 
-* `node $SP/make_harness.js N` writes `$SP/stageN/index.html` that loads the engine plus **only** your
-  `js/stages/stageN.js` (isolated from other authors' unfinished files) and prints its URL.
-  Then `export GAME_URL=file://$SP/stageN/index.html`.
-* `node $SP/lint.js 1` dry-runs your stage (`G.lint(0)`) and lists design problems. It must print no ISSUE lines.
-* `node $SP/play.js "autostart=1&god=1&stage=1" "600,600,600" myprefix` fast-forwards with a simple bot
-  (`god=1` = invulnerable, `nobot` suffix e.g. `"60:nobot"` disables the bot) and saves a screenshot after
-  each chunk of frames to `$SP/shots/myprefix_K.png` (view them with the Read tool!). Frame 0 is the start of the
-  stage intro (130 frames); the stage starts at frame ~130; `camX` advances `scroll` px/frame.
-  Query params: `manual=1` (always added), `autostart=1`, `stage=N` (1-based **index within the registered
-  stages**, so with the isolated harness it is always `1`), `god=1`, `debug=1`, `diff=easy|normal|hard`.
-* `node $SP/trace.js "autostart=1&stage=1" 9000 300` runs a survival bot without god mode and prints a timeline
-  (deaths, respawns, score, boss phase) — useful to see whether fights end.
-* In the page: `G.step()` advances one frame (call `G.render()` before a screenshot); `G.camX = 3000` teleports
-  the camera (call `G.resetWorld(3000)` to also rebuild what is on screen); `G.spawn(...)`; `G.boss`;
-  `G.player.speedLv = 5; G.player.missile = true; ...` to test with upgrades.
-  `Input.setVirtual('fire', true)` presses keys.
-* Always look at screenshots of every section, of every enemy type, and of each boss phase. Check that
-  nothing overlaps the HUD unreadably, hitboxes match sprites, and the stage reads well at 1x scale.
+## 10. Known engine behaviours worth remembering
+
+* `G.spawn` snaps terrain-anchored enemies before `def.init` runs (using `w/3` around the centre); `e.x` of an anchored
+  enemy is refreshed *after* `update`, so it is one frame old inside `update`.
+* Parts are hit-tested in list order; put the front-most part first. A `vuln:false` (or non-`solid:false`) part absorbs
+  shots even when `harmless`.
+* `G.bossDefeated` kills every other enemy (their `onDeath` runs and carriers drop capsules); guard follow-up spawns
+  with `G.bossPhase === 'dying'`.
+* `resetWorld` (checkpoint respawn) replays only terrain-anchored spawns; other `S.at` events are not replayed, so use
+  `stage.onReset(G)` to restore per-checkpoint state (scroll speed, persistent decor).
+* Enemy bullets are capped at 90 on screen; `G.fireDelay` never returns less than 8 frames.
+* Terrain tiles are seamless for `brick`, `metal`, `organic` and `cell`; only `rock` gets per-column vertical shifts
+  (set `skin.shift: true/false` to override).
