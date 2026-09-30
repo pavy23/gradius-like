@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>NOVA LANCER</title>
+<meta name="description" content="NOVA LANCER — 브라우저에서 바로 즐기는 도트 그래픽 횡스크롤 슈팅 게임. 7개 스테이지, 파워업 미터, 보스전. 설치 불필요.">
+<meta name="theme-color" content="#05060f">
+<meta property="og:type" content="website">
+<meta property="og:title" content="NOVA LANCER">
+<meta property="og:description" content="브라우저에서 바로 즐기는 도트 그래픽 횡스크롤 슈팅 게임. 7개 스테이지, 파워업 미터, 보스전. 설치 불필요.">
+<meta property="og:image" content="https://pavy23.github.io/gradius-like/docs/screenshots/title.png">
+<meta property="og:image:width" content="512">
+<meta property="og:image:height" content="448">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'%3E%3Crect width='16' height='16' rx='3' fill='%230a0d24'/%3E%3Cpath fill='%23ff9a2e' d='M0 7h2v2H0z'/%3E%3Cpath fill='%23e8483c' d='M5 4h3v1H5zM4 5h5v1H4zM4 10h5v1H4zM5 11h3v1H5z'/%3E%3Cpath fill='%23f4f8ff' d='M3 6h7v1H3zM2 7h11v1H2z'/%3E%3Cpath fill='%239fc4f0' d='M2 8h13v1H2zM3 9h7v1H3z'/%3E%3Cpath fill='%2339c5ff' d='M8 7h2v1H8z'/%3E%3C/svg%3E">
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #05060f; overflow: hidden; }
+  body { display: flex; align-items: center; justify-content: center; }
+  #wrap { position: relative; line-height: 0; }
+  canvas { image-rendering: pixelated; image-rendering: crisp-edges; background: #000; outline: none; display: block; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="screen" width="256" height="224" tabindex="0"></canvas></div>
+<script src="js/core.js"></script>
+<script src="js/font.js"></script>
+<script src="js/sprites.js"></script>
+<script src="js/art.js"></script>
+<script src="js/terrain.js"></script>
+<script src="js/background.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/music.js"></script>
+<script src="js/player.js"></script>
+<script src="js/game.js"></script>
+<script src="js/debug.js"></script>
+<script src="js/enemies.js"></script>
+<script src="js/bosses.js"></script>
+<script src="js/stages/stage1.js"></script>
+<script src="js/stages/stage2.js"></script>
+<script src="js/stages/stage3.js"></script>
+<script src="js/stages/stage4.js"></script>
+<script src="js/stages/stage5.js"></script>
+<script src="js/stages/stage6.js"></script>
+<script src="js/stages/stage7.js"></script>
+<script src="js/touch.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
