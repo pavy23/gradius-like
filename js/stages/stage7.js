@@ -14,7 +14,6 @@
     hz: '#ffd430', hzk: '#1a1408', // hazard stripes
     lr: '#ff3a3a', lg: '#4cff7a', lo: '#ff9424', lc: '#48ecf4', // status lights
   };
-  const s7rad = (deg) => (deg * Math.PI) / 180;
   /** a cheap deterministic hash noise 0..1 */
   const s7hash = (a, b) => {
     let h = (a * 374761393 + b * 668265263) | 0;
@@ -1377,11 +1376,11 @@
   /** crusher position over one cycle: 0 retracted .. 1 extended (dwell, warning, slam, dwell, retract) */
   function s7pistonPos(t, P) {
     const u = (t % P) / P;
-    if (u < 0.42) return { p: 0, warn: false };
-    if (u < 0.57) return { p: 0, warn: true };
-    if (u < 0.65) { const k = (u - 0.57) / 0.08; return { p: k * k, warn: false }; }
-    if (u < 0.84) return { p: 1, warn: false };
-    const k = (u - 0.84) / 0.16;
+    if (u < 0.4) return { p: 0, warn: false };
+    if (u < 0.55) return { p: 0, warn: true };
+    if (u < 0.68) { const k = (u - 0.55) / 0.13; return { p: k * k, warn: false }; }
+    if (u < 0.85) return { p: 1, warn: false };
+    const k = (u - 0.85) / 0.15;
     return { p: 1 - k * (2 - k), warn: false };
   }
 
@@ -1738,9 +1737,11 @@
     walls(e, st) {
       const P = G.player;
       const GAP = 72, t0 = 46, t1 = 96, t2 = 142, t3 = 188;
-      if (st === 1) e.wl = { yc: clamp(P.y, e.ct + 34 + GAP / 2, e.fb - 34 - GAP / 2), k: 0, warn: true, yt: e.ct, yb: e.fb };
+      const lane = () => clamp(P.alive ? P.y : e.y, e.ct + 34 + GAP / 2, e.fb - 34 - GAP / 2);
+      if (st === 1) e.wl = { yc: lane(), k: 0, warn: true, yt: e.ct, yb: e.fb };
       const w = e.wl;
       if (!w) return;
+      if (st < t0) w.yc += (lane() - w.yc) * 0.12; // the lane follows you during the warning, then locks
       let k = 0;
       if (st >= t0 && st < t1) k = s7ease((st - t0) / (t1 - t0));
       else if (st >= t1 && st < t2) k = 1;
@@ -1762,7 +1763,7 @@
       if (st === 6 || st === 74) { e.pulse = 34; sfx('coreOpen'); G.shake = Math.max(G.shake, 2); }
       if ((st === 40 || st === 108) && P.alive) {
         const n = 22, gap = 0.95;
-        const centre = Math.atan2(P.y - e.y, P.x - e.x) + rnd(-0.5, 0.5);
+        const centre = Math.atan2(P.y - e.y, P.x - e.x) + rnd(-0.3, 0.3);
         for (let i = 0; i < n; i++) {
           const a = centre + gap / 2 + (i * (TAU - gap)) / (n - 1);
           G.ebullet(e.x - 8, e.y, Math.cos(a) * 1.25, Math.sin(a) * 1.25, i ? { quiet: true, spr: 'ebullet2', w: 5, h: 5 } : S7_ORB);
@@ -2300,8 +2301,8 @@
       lamps([[446, 168], [480, 168, true], [583, 164, true], [617, 164], [719, 170], [753, 170, true]]);
 
       /* ---- calm (cp1 = 912) ---- */
-      S.wave(1030, 'spinner', { n: 5, gap: 12, y: 96, dirY: 1, turnX: 140, ...carry });
-      S.wave(1105, 'diver', { n: 4, gap: 22, y: 60, dy: 30 });
+      S.wave(1060, 'spinner', { n: 5, gap: 12, y: 96, dirY: 1, turnX: 140, ...carry });
+      S.wave(1135, 'diver', { n: 4, gap: 22, y: 60, dy: 30 });
       S.banner(1140, ['HANGAR']);
 
       /* ---- 2. HANGAR: bays, gantry turrets, belts ---- */
@@ -2342,10 +2343,10 @@
       S.wave(2930, 'spinner', { n: 5, gap: 12, y: 120, dirY: -1, turnX: 120 });
 
       /* ---- 3b. LASER GATES AND CRUSHERS ----
-       * gates are timed by their own age, i.e. by the screen position: phase 10 is armed only far to the
-       * right (x = 184..128, a harmless first look), phase 120 while it passes x = 112..56 (do not advance
-       * into it) and phase 70 while it passes x = 72..16 (camper trap: cross it while it is off or blinks).
-       * pistons: phase 55 = closed at x = 44 (cross while open). */
+       * gates are timed by their own age, i.e. by the screen position (86 off, 44 blinking, 70 armed):
+       * phase 10 is armed only far to the right (x = 184..128, a harmless first look), phase 120 while it
+       * passes x = 112..56 (do not advance into it) and phase 100 while it passes x = 96..40 (cross it while
+       * it is off or blinking; the far left edge is a refuge). pistons: phase 55 = closed at x = 60..30. */
       S.fixed(3090, 112, 's7_gate', { phase: 10 });
       S.wave(3110, 's7_drone', { n: 3, gap: 22, y: 112, mode: 'sine', amp: 16, ...carry });
       S.fixed(3200, 112, 's7_gate', { phase: 120 });
@@ -2354,7 +2355,7 @@
       S.wave(3345, 's7_mine', { n: 2, gap: 50, y: 100, dy: 30, speed: 0.5 });
       S.fixed(3430, 112, 's7_piston', { dir: 'ceil', phase: 10, stroke: 56 });
       S.fixed(3430, 112, 's7_piston', { dir: 'floor', phase: 110, stroke: 56 });
-      S.fixed(3540, 112, 's7_gate', { phase: 70 });
+      S.fixed(3540, 112, 's7_gate', { phase: 100 });
       S.wave(3500, 's7_drone', { n: 3, gap: 20, y: 112, mode: 'sine', amp: 14, ...carry });
 
       /* ---- calm (cp4 = 3648) ---- */

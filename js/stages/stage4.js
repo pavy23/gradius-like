@@ -1,10 +1,33 @@
 'use strict';
 /* =============================================================
  * STAGE 4 — REVERSE VOLCANO
+ *
  * The volcano stage turned upside down: huge crater mountains hang from
- * the ceiling and rain rocks onto forested, burning hills; lava streams
- * and geysers below; an armoured "Iron Maiden" crawls the ceiling.
- * (all names are prefixed s4_ ; everything lives inside one IIFE)
+ * the ceiling and rain rocks onto forested, burning hills; lava streams,
+ * lava lakes and geysers below; an armoured "Iron Maiden" crawls the
+ * ceiling of an iron hall (mid-boss); the Guardian Core (violet) waits in
+ * a calm lava arena.
+ *
+ *   0    A  ember gate      lush pines, first hanging tips, volcano #1
+ *   650  B  burning forest  tall hills, burning trees, valley geysers
+ *   1400 C  hanging volcanoes  vents rain rocks, two tight squeezes
+ *   2000 D  lava lake       geysers, lava bubbles, aimed rocks
+ *   2420 H  iron hall       IRON MAIDEN (3 armour plates + core), scroll 0.62
+ *   3480 E  final approach  lava lake, last vent, capsules, calm run-in
+ *   4000    boss arena      flat, 164 px corridor, lava floor
+ *
+ * Checkpoints 0 / 820 / 1540 / 2300 / 3520 sit in open air; shooters and
+ * squads keep out of the ~5 s that follow each one.
+ *
+ * Signature enemies (all prefixed s4_): s4_vent + s4_rock (crater rains
+ * rocks that splash into embers), s4_geyser (telegraphed lava column, an
+ * invulnerable moving obstacle), s4_wisp (ghost fire on sine paths),
+ * s4_crawler (ceiling walker), s4_stal (stalactite trap), s4_bubble (lava
+ * bubble), s4_maiden + s4_bomb (mid-boss), s4_burn / s4_lavafx (living
+ * decoration). Generic turret / rocket / diver / spinner are reused.
+ *
+ * Everything lives inside one IIFE; only STAGES, ENEMIES, Sprites and
+ * Terrain.TILES receive (s4_-prefixed) entries.
  * ============================================================= */
 (function stage4() {
   /* =====================================================================
@@ -537,12 +560,12 @@
     { type: 'hill', x: 480, w: 170, h: 70, shape: 'cos' },
     // B: tall burning forest hills
     { type: 'hill', x: 790, w: 230, h: 90, shape: 'cos' },
-    { type: 'hill', x: 1000, w: 190, h: 106, shape: 'cos' },
+    { type: 'hill', x: 1005, w: 190, h: 100, shape: 'cos' },
     { type: 'hill', x: 1195, w: 200, h: 84, shape: 'cos' },
     { type: 'hill', x: 1385, w: 170, h: 96, shape: 'cos' },
     // C: hills between the hanging volcanoes
     { type: 'hill', x: 1522, w: 150, h: 43, shape: 'cos' },
-    { type: 'hill', x: 1690, w: 200, h: 92, shape: 'cos' },
+    { type: 'hill', x: 1690, w: 200, h: 80, shape: 'cos' },
     { type: 'hill', x: 1835, w: 150, h: 46, shape: 'cos' },
     { type: 'hill', x: 2000, w: 150, h: 68, shape: 'cos' },
     // hall (mid-boss) forest
@@ -1633,6 +1656,11 @@
       squad(3700, 'spinner', { n: 4, gap: 12, dirY: 1, turnX: 140 });
       wisp(3780, { n: 5, gap: 13, at: 0.45, amp: 24, carry: 'last', shoot: 100 });
       wisp(3900, { n: 5, gap: 13, at: 0.5, amp: 20, carry: 'last' });
+
+      // safety net: nothing of the mid-boss may still be around when the boss sequence starts
+      S.at(BOSS_X - 150, () => {
+        for (const e of G.enemies) if (e.type === 's4_maiden' && !e.dead) e.mode = 'leave';
+      });
 
       S.boss(BOSS_X, 'bigcore', { level: 4 });
     },

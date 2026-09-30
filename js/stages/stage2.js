@@ -1287,7 +1287,8 @@
 
   /* ---- mid-boss: the Hive Queen ----
    * head (stinger fan)  core (thorax, kills her)  abdomen (brood ring)
-   * she rides the screen, so the scroll never stops; she leaves after `stay` frames */
+   * Once her head is gone she goes berserk and charges across the screen.
+   * She rides the screen, so the scroll never stops; she leaves after `stay` frames. */
   ENEMIES.s2_queen = {
     w: 62, h: 40, hp: 1, score: 8000, expl: 'l',
     init(e, o) {
@@ -1299,11 +1300,13 @@
         part('abd', 16, 7, 26, 18, 32, 'm', 800),
       ];
       e.phase = 'enter';
+      e.mode = 'hover'; // hover -> windup -> dash -> return
       e.homeX = o.homeX || 186;
       e.by = e.y;
       e.age = 0;
       e.cdFan = 100;
       e.cdBrood = 70;
+      e.cdDash = 260;
       e.leaveAt = o.stay || 960;
     },
     update(e) {
@@ -1321,6 +1324,28 @@
       }
       e.age++;
       const rage = head.dead ? 1.4 : 1;
+      // smoke and sparks from wrecked parts
+      for (const p of e.parts) if (p.dead && (e.t & 7) === 0) G.fx.push({ k: 'part', x: e.x + p.ox + rnd(-5, 5), y: e.y + p.oy + rnd(-4, 4), vx: rnd(-0.3, 0.3), vy: -rnd(0.2, 0.7), life: 26, t: 0, col: chance(0.5) ? '#ff9424' : '#6a7a90', big: chance(0.4) });
+
+      /* charge: wind-up (she locks onto your row), dash across the screen, come back from the right */
+      if (e.mode === 'windup') {
+        e.wt--;
+        e.y += clamp((P.alive ? P.y : e.y) - e.y, -0.7, 0.7);
+        e.x = e.homeX + (e.wt & 2 ? 2 : -2) + Math.min(0, (e.wt - 30) * 0.35);
+        if (e.wt <= 0) { e.mode = 'dash'; sfx('bossLaser'); }
+        return;
+      }
+      if (e.mode === 'dash') {
+        e.x -= 3.6;
+        if (e.x < -70) { e.mode = 'return'; e.x = W + 80; }
+        return;
+      }
+      if (e.mode === 'return') {
+        e.x += (e.homeX - e.x) * 0.045 - 0.3;
+        if (e.x <= e.homeX + 1) { e.mode = 'hover'; e.cdDash = G.fireDelay(420); }
+        return;
+      }
+
       e.by = clamp(e.by + clamp((P.alive ? P.y : 112) - e.by, -0.3 * rage, 0.3 * rage), 62, 158);
       e.x = e.homeX + Math.sin(e.age * 0.02 * rage) * 9;
       e.y = e.by + Math.sin(e.age * 0.032 * rage) * 15;
@@ -1341,9 +1366,13 @@
         }
         e.cdBrood = G.fireDelay(head.dead ? 170 : 240);
       }
+      // berserk charge (only after the head is destroyed)
+      if (head.dead && --e.cdDash <= 0 && P.alive) {
+        e.mode = 'windup';
+        e.wt = 44;
+        sfx('coreOpen');
+      }
       if (e.age > e.leaveAt) e.phase = 'leave';
-      // smoke and sparks from wrecked parts
-      for (const p of e.parts) if (p.dead && (e.t & 7) === 0) G.fx.push({ k: 'part', x: e.x + p.ox + rnd(-5, 5), y: e.y + p.oy + rnd(-4, 4), vx: rnd(-0.3, 0.3), vy: -rnd(0.2, 0.7), life: 26, t: 0, col: chance(0.5) ? '#ff9424' : '#6a7a90', big: chance(0.4) });
     },
     onPartDeath(e, p) {
       if (p.name === 'core') G.kill(e);
@@ -1354,7 +1383,9 @@
     },
     draw(e, c) {
       const fr = (e.t >> 2) & 1;
-      Sprites.draw(c, 's2_queen', e.x, e.y, { frame: fr });
+      // the wind-up blinks red so the charge is unmistakable
+      const warn = e.mode === 'windup' && (e.wt >> 2) & 1;
+      Sprites.draw(c, 's2_queen', e.x, e.y, { frame: fr, flash: !!warn });
       // hit flash only over the part that was hit
       for (const p of e.parts) {
         if (p.dead || !(p.flash > 0)) continue;
@@ -1448,8 +1479,8 @@
       S.at(2560, () => G.spawn('s2_queen', { x: W + 50, y: 100, carry: true }));
 
       /* ---- hanging arcade ---- */
-      sw(2900, { pat: 'braid', n: 16, gap: 4, y: 142, amp: 30, per: 110, speed: 1.6, carry: 'last' });
-      sw(3060, { pat: 'sine', n: 10, gap: 6, y: 112, amp: 18, per: 120, speed: 1.5 });
+      sw(2900, { pat: 'braid', n: 16, gap: 4, y: 142, amp: 30, per: 110, speed: 1.6 });
+      sw(3060, { pat: 'sine', n: 10, gap: 6, y: 112, amp: 18, per: 120, speed: 1.5, carry: 'last' });
       S.ceil(3125, 'turret');   // under the keystone of the middle arch
       S.fixed(3235, 100, 's2_sentinel', { reach: 18 });
       S.ceil(3032, 's2_drop'); S.ceil(3162, 's2_drop'); S.ceil(3262, 's2_drop');

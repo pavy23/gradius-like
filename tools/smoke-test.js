@@ -6,6 +6,7 @@
  *   node tools/smoke-test.js               lint every stage and let a bot play the whole game
  *   node tools/smoke-test.js --lint        lint only
  *   node tools/smoke-test.js --god         invulnerable bot (fast full-game flow check)
+ *   node tools/smoke-test.js --from 5      start the bot playthrough at stage 5
  *   node tools/smoke-test.js --url <file-or-url>
  *
  * Exit code 1 when a lint issue, a console error, an exception or an unfinished game is found.
@@ -30,6 +31,7 @@ const flag = (n) => args.includes('--' + n);
 const opt = (n, d) => { const i = args.indexOf('--' + n); return i >= 0 ? args[i + 1] : d; };
 const url = opt('url', 'file://' + path.resolve(__dirname, '..', 'index.html'));
 const botOpts = JSON.parse(opt('bot', '{"every":6,"horizon":8}'));
+const fromStage = Math.max(1, parseInt(opt('from', '1'), 10) || 1);
 
 (async () => {
   const { chromium } = loadPlaywright();
@@ -53,8 +55,8 @@ const botOpts = JSON.parse(opt('bot', '{"every":6,"horizon":8}'));
 
   /* ---- 2. bot playthrough ---- */
   if (!flag('lint')) {
-    const res = await page.evaluate(({ botOpts, god }) => {
-      G.startStage = 0;
+    const res = await page.evaluate(({ botOpts, god, fromStage }) => {
+      G.startStage = fromStage - 1;
       G.startGame();
       const perStage = {};
       let frames = 0, cleared = false;
@@ -71,7 +73,7 @@ const botOpts = JSON.parse(opt('bot', '{"every":6,"horizon":8}'));
         if (before && !G.player.alive) deaths.push({ stage: id, cam: G.camX, boss: !!G.bossPhase, hit: G.lastHit ? G.lastHit.kind + ':' + G.lastHit.name : '?' });
       }
       return { cleared, frames, perStage, deaths, score: G.score, continues: G.continues };
-    }, { botOpts, god: flag('god') });
+    }, { botOpts, god: flag('god'), fromStage });
     console.log(`bot ${res.cleared ? 'CLEARED the game' : 'did NOT clear the game'} in ${(res.frames / 3600).toFixed(1)} min of game time, score ${res.score}, continues ${res.continues}`);
     const byStage = {};
     for (const d of res.deaths) byStage[d.stage] = (byStage[d.stage] || 0) + 1;

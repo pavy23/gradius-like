@@ -42,10 +42,14 @@ window.__bot = function (opts) {
     if (best) { ty = best.y; }
     else ty = 112;
   }
-  // stay in the free corridor: aim inside terrain gap at the look-ahead column
-  const colX = camX + Math.min(W_ - 1, P.x + 60);
-  const top = T.ceilBottom(colX) + 14, bot = T.floorTop(colX) - 14;
-  if (bot > top) ty = clamp(ty, top, bot);
+  // stay inside the free corridor of the next ~110 px (probe several columns so tall thin pillars are seen)
+  let top = 0, bot = H_;
+  for (let dx = 0; dx <= 110; dx += 5) {
+    const cx = camX + Math.min(W_ - 1, P.x + dx);
+    top = Math.max(top, T.ceilBottom(cx) + 14);
+    bot = Math.min(bot, T.floorTop(cx) - 14);
+  }
+  ty = bot > top ? clamp(ty, top, bot) : (top + bot) / 2;
 
   // ---- evaluate 9 moves ----
   const HZ = opts.horizon || 14;
