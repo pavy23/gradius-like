@@ -122,6 +122,7 @@ const Music = (function () {
   };
   const DRUM_BITS = { k: 1, s: 2, g: 4, h: 8, o: 16, t: 32, m: 64, d: 128, c: 256, x: 512 };
   const VEL_ACCENT = 1.3, VEL_SOFT = 0.6;
+  const COMBO = [1, 1, 0.8, 0.68, 0.6, 0.55];      // gain when 1,2,3.. drums hit on the same step
 
   // ------------------------------------------------------------------ compiling track data
   // Expand a multi-line string into [{text, src}] bars, resolving  @name  and  *N .
@@ -364,7 +365,9 @@ const Music = (function () {
     src._a = f; src._b = g;
     src.onended = ended;
   }
-  function dTone(ctx, out, t, type, f0, f1, tf, dur, amp) {
+  // Pitched drum body. `slot` (kick/toms) makes the voice monophonic: the previous hit of the same drum is ramped out
+  // (4 ms) when the next one starts, so rapid rolls cannot pile up low-frequency energy.
+  function dTone(ctx, out, t, type, f0, f1, tf, dur, amp, chan, slot) {
     const o = ctx.createOscillator();
     o.type = type;
     o.frequency.setValueAtTime(f0, t);
@@ -377,15 +380,29 @@ const Music = (function () {
     o.stop(t + dur + 0.02);
     o._a = g;
     o.onended = ended;
+    if (chan) {
+      const prev = chan.slots[slot];
+      if (prev && prev.g.gain.cancelAndHoldAtTime) {
+        try {
+          prev.g.gain.cancelAndHoldAtTime(t);
+          prev.g.gain.linearRampToValueAtTime(0, t + 0.004);
+          prev.o.stop(t + 0.006);
+        } catch (e) { /* previous voice already gone */ }
+      }
+      chan.slots[slot] = { o: o, g: g };
+    }
   }
 
   function drumHit(p, chan, mask, t, vel) {
     const ctx = p.ctx, out = chan.in, mx = chan.I.mix;
     const off = ((p.nc++ * 0.377) % 1.2);
+    let n = 0;                                                        // simultaneous hits share headroom
+    for (let m = mask; m; m &= m - 1) n++;
+    vel *= COMBO[n] || 0.5;
     let v;
     if (mask & 1) {                                                   // kick
       v = vel * (mx && mx.k != null ? mx.k : 1);
-      dTone(ctx, out, t, 'sine', 175, 46, 0.075, 0.22, 0.78 * v);
+      dTone(ctx, out, t, 'sine', 175, 46, 0.075, 0.2, 0.72 * v, chan, 0);
       dNoise(ctx, out, t, 0.008, 'highpass', 2500, 0, 0.7, 0.12 * v, off);
     }
     if (mask & 2) {                                                   // snare
@@ -399,30 +416,30 @@ const Music = (function () {
     }
     if (mask & 8) {                                                   // closed hat
       v = vel * (mx && mx.h != null ? mx.h : 1);
-      dNoise(ctx, out, t, 0.04, 'highpass', 7500, 0, 0.7, 0.28 * v, off);
+      dNoise(ctx, out, t, 0.04, 'highpass', 7500, 0, 0.7, 0.24 * v, off);
     }
     if (mask & 16) {                                                  // open hat
       v = vel * (mx && mx.o != null ? mx.o : 1);
-      dNoise(ctx, out, t, 0.17, 'highpass', 6800, 0, 0.7, 0.24 * v, off);
+      dNoise(ctx, out, t, 0.17, 'highpass', 6800, 0, 0.7, 0.21 * v, off);
     }
     if (mask & 32) {                                                  // hi tom
       v = vel * (mx && mx.t != null ? mx.t : 1);
-      dTone(ctx, out, t, 'sine', 240, 150, 0.09, 0.2, 0.6 * v);
+      dTone(ctx, out, t, 'sine', 240, 150, 0.09, 0.2, 0.6 * v, chan, 1);
       dNoise(ctx, out, t, 0.01, 'highpass', 2500, 0, 0.7, 0.08 * v, off);
     }
     if (mask & 64) {                                                  // mid tom
       v = vel * (mx && mx.m != null ? mx.m : 1);
-      dTone(ctx, out, t, 'sine', 175, 105, 0.1, 0.24, 0.65 * v);
+      dTone(ctx, out, t, 'sine', 175, 105, 0.1, 0.24, 0.65 * v, chan, 2);
       dNoise(ctx, out, t, 0.01, 'highpass', 2500, 0, 0.7, 0.08 * v, off);
     }
     if (mask & 128) {                                                 // low tom
       v = vel * (mx && mx.d != null ? mx.d : 1);
-      dTone(ctx, out, t, 'sine', 125, 72, 0.12, 0.3, 0.75 * v);
+      dTone(ctx, out, t, 'sine', 125, 72, 0.12, 0.3, 0.75 * v, chan, 3);
       dNoise(ctx, out, t, 0.01, 'highpass', 2500, 0, 0.7, 0.08 * v, off);
     }
     if (mask & 256) {                                                 // crash
       v = vel * (mx && mx.c != null ? mx.c : 1);
-      dNoise(ctx, out, t, 1.0, 'highpass', 5200, 0, 0.7, 0.3 * v, off);
+      dNoise(ctx, out, t, 1.0, 'highpass', 5200, 0, 0.7, 0.2 * v, off);
     }
     if (mask & 512) {                                                 // rim / click
       v = vel * (mx && mx.x != null ? mx.x : 1);
@@ -455,7 +472,7 @@ const Music = (function () {
       const c = C.ch[i], I = c.inst;
       if (o && o.solo && o.solo.indexOf(c.name) < 0) continue;
       if (o && o.mute && o.mute.indexOf(c.name) >= 0) continue;
-      const chan = { c: c, I: I, name: c.name, in: null, cg: null, vlfo: null, dl: null, lastF: 0, lastEnd: -1 };
+      const chan = { c: c, I: I, name: c.name, in: null, cg: null, vlfo: null, dl: null, lastF: 0, lastEnd: -1, slots: [null, null, null, null] };
       const cg = ctx.createGain();
       cg.gain.value = I.vol * C.gain;
       let tail = cg;
@@ -663,17 +680,22 @@ const Music = (function () {
     return (typeof document !== 'undefined' && document.hidden) ? LOOKAHEAD_HIDDEN : LOOKAHEAD;
   }
 
+  function startTimer() { if (!timer) timer = setInterval(tick, TICK_MS); }
+
+  // one shared setInterval; it switches itself off when nothing is playing (or everything is paused)
   function tick() {
     try {
+      let running = 0;
       for (let i = active.length - 1; i >= 0; i--) {
         const p = active[i];
         if (p.dead) { active.splice(i, 1); continue; }
         if (p.paused) continue;
+        running++;
         const now = p.ctx.currentTime;
         if (!p.done) pump(p, now + lookahead());
         if (p.done && now >= p.endTime) finish(p);
       }
-      if (!active.length && timer) { clearInterval(timer); timer = 0; }
+      if (!running && timer) { clearInterval(timer); timer = 0; }
     } catch (e) { warnOnce('tick', 'Music: scheduler error', e); }
   }
 
@@ -716,7 +738,7 @@ const Music = (function () {
     cur = p;
     M.current = name;
     active.push(p);
-    if (!timer) timer = setInterval(tick, TICK_MS);
+    startTimer();
     pump(p, now + lookahead());
     return true;
   }
@@ -767,7 +789,7 @@ const Music = (function () {
       const p = cur;
       if (!p || !p.paused || p.dead || !haveAudio()) return;
       p.paused = false;
-      if (p.resumePos >= p.C.steps) { p.done = true; p.endTime = 0; return; }     // paused during the tail of a jingle
+      if (p.resumePos >= p.C.steps) { p.done = true; p.endTime = 0; startTimer(); return; }     // paused during the tail of a jingle
       const now = p.ctx.currentTime;
       buildGraph(p, Sound.musicBus, null);
       const gp = p.g.out.gain;
@@ -778,6 +800,7 @@ const Music = (function () {
       p.nextTime = now + 0.04;
       p.carry = true;
       p.rn = 0;
+      startTimer();
       pump(p, now + lookahead());
     } catch (e) { warnOnce('resume', 'Music.resume failed', e); }
   };
@@ -797,6 +820,12 @@ const Music = (function () {
   };
 
   M.list = function () { return Object.keys(M.tracks); };
+  M._state = function () {                       // test hook
+    const p = cur;
+    return { current: M.current, pending: pending ? pending.name : null, timer: !!timer, active: active.length,
+             paused: !!(p && p.paused), pos: p ? (p.paused ? p.resumePos : p.pos) : -1, done: !!(p && p.done),
+             nextTime: p ? p.nextTime : 0, now: p ? p.ctx.currentTime : 0, hasGraph: !!(p && p.g) };
+  };
   M.isPlaying = function () { return !!(cur && !cur.dead && !cur.paused); };
 
   // Called by Sound.init(): start a track that was requested before audio was available.
@@ -1093,7 +1122,7 @@ Music.tracks.stage1 = {
         C5 - - E5 | G5 - - - | A5 - G5 - | E5 - - -
         D#5 - - F#5 | A5 - - - | B5 - A5 - | F#5 - - -
       ` },
-    lead2: { w: 'pulse12', vol: 0.2, a: 0.006, d: 0.3, s: 0.8, r: 0.06, g: 0.94, vib: [5.6, 10, 0.2], bend: 0, bendT: 0.045, echo: null, pan: 0.05, bars: `
+    lead2: { w: 'pulse12', vol: 0.3, a: 0.006, d: 0.3, s: 0.8, r: 0.06, g: 0.94, vib: [5.6, 10, 0.2], bend: 0, bendT: 0.045, echo: null, pan: 0.05, bars: `
         . . . . | . . . . | . . . . | . . . .
         . . . . | . . . . | . . . . | . . . .
         . . . . | . . . . | . . . . | . . . .
@@ -1445,7 +1474,7 @@ Music.tracks.stage3 = {
     `,
   },
   ch: {
-    mar: { w: 'pulse50', vol: 0.25, a: 0.002, d: 0.16, s: 0, r: 0.03, g: 1, lp: 3000, echo: [0.2, 3, 0.3], pan: -0.15, bars: `
+    mar: { w: 'pulse50', vol: 0.35, a: 0.002, d: 0.16, s: 0, r: 0.03, g: 1, lp: 3000, echo: [0.2, 3, 0.3], pan: -0.15, bars: `
         A4 - C5 E5 | - - D5 - | A4 - C5 E5 | - - G5 -
         A4 - C5 E5 | - - D5 - | E5 - D5 C5 | - - A4 -
         G4 - B4 D5 | - - C5 - | G4 - B4 D5 | - - F5 -
@@ -1471,7 +1500,7 @@ Music.tracks.stage3 = {
         G4 - B4 D5 | - - F5 - | G5 - F5 D5 | - - B4 -
         A4 - C5 E5 | - - D5 - | E5 - Eb5 D5 | - - C5 -
       ` },
-    mar2: { w: 'pulse25', vol: 0.15, a: 0.002, d: 0.1, s: 0, r: 0.02, g: 1, lp: 4200, pan: 0.25, bars: `
+    mar2: { w: 'pulse25', vol: 0.3, a: 0.002, d: 0.1, s: 0, r: 0.02, g: 1, lp: 4200, pan: 0.25, bars: `
         . . . . | E5 - - A5 | . . . . | E5 - - A5
         . . . . | E5 - - A5 | . . . . | E5 - - A5
         . . . . | D5 - - G5 | . . . . | D5 - - G5
@@ -1549,7 +1578,7 @@ Music.tracks.stage3 = {
         . . . . | . . . . | . . . . | . . . .
         . . . . | . . . . | . . . . | . . . .
       ` },
-    bass: { w: 'tri', vol: 0.185, a: 0.003, d: 0.06, s: 0.9, r: 0.03, g: 0.85, bars: `
+    bass: { w: 'tri', vol: 0.25, a: 0.003, d: 0.06, s: 0.9, r: 0.03, g: 0.85, bars: `
         A2 . . A2 | . . A3 . | A2 . . A2 | . . E3 .
         A2 . . A2 | . . A3 . | A2 . . A2 | . . E3 .
         G2 . . G2 | . . G3 . | G2 . . G2 | . . D3 .
@@ -1652,7 +1681,7 @@ Music.tracks.stage4 = {
     `,
   },
   ch: {
-    lead: { w: 'saw', vol: 0.17, a: 0.004, d: 0.2, s: 0.7, r: 0.05, g: 0.93, lp: 3400, vib: [6.5, 22, 0.1], bend: -0.5, echo: [0.12, 3, 0.3], pan: 0.05, bars: `
+    lead: { w: 'saw', vol: 0.22, a: 0.004, d: 0.2, s: 0.7, r: 0.05, g: 0.93, lp: 3400, vib: [6.5, 22, 0.1], bend: -0.5, echo: [0.12, 3, 0.3], pan: 0.05, bars: `
         F#5 F#5 . F#5 | . F#5 G5 F#5 | A5 - F#5 - | G#5 - F#5 -
         F#5 F#5 . F#5 | . F#5 A5 F#5 | C#6 - B5 - | A5 - G#5 -
         D5 D5 . D5 | . D5 E5 D5 | F#5 - D5 - | E5 - D5 -
@@ -2043,7 +2072,7 @@ Music.tracks.stage7 = {
     `,
   },
   ch: {
-    lead: { w: 'pulse12', vol: 0.25, a: 0.002, d: 0.06, s: 0.6, r: 0.02, g: 0.7, pan: 0.05, bars: `
+    lead: { w: 'pulse12', vol: 0.4, a: 0.002, d: 0.06, s: 0.6, r: 0.02, g: 0.7, pan: 0.05, bars: `
         B5 . B5 . | B5 . . . | F6 . F6 . | F6 . . .
         B5 - F6 - | B5 - F6 - | B5 - F6 - | B5 - F6 -
         C6 . C6 . | C6 . . . | F#6 . F#6 . | F#6 . . .
@@ -2069,7 +2098,7 @@ Music.tracks.stage7 = {
         G5 . G5 . | G5 . . . | C#6 . C#6 . | C#6 . . .
         F#5 . F#5 . | F#5 . . . | C6 . C6 . | C6 . . .
       ` },
-    harm: { w: 'fm', fm: [3.5, 1.4, 0.25], vol: 0.11, a: 0.002, d: 0.1, s: 0.4, r: 0.03, g: 0.7, pan: 0.3, bars: `
+    harm: { w: 'fm', fm: [3.5, 1.4, 0.25], vol: 0.2, a: 0.002, d: 0.1, s: 0.4, r: 0.03, g: 0.7, pan: 0.3, bars: `
         . . . . | . . . . | . . . . | . . . .
         . . . . | . . . . | . . . . | . . . .
         . . . . | . . . . | . . . . | . . . .
@@ -2095,7 +2124,7 @@ Music.tracks.stage7 = {
         G4 . G4 . | G4 . . . | C#5 . C#5 . | C#5 . . .
         F#4 . F#4 . | F#4 . . . | C5 . C5 . | C5 . . .
       ` },
-    arp: { w: 'pulse25', vol: 0.11, a: 0.002, d: 0.05, s: 0.5, r: 0.02, g: 0.55, pan: -0.3, bars: `
+    arp: { w: 'pulse25', vol: 0.16, a: 0.002, d: 0.05, s: 0.5, r: 0.02, g: 0.55, pan: -0.3, bars: `
         . . . . | . . . . | . . . . | . . . .
         . . . . | . . . . | . . . . | . . . .
         . . . . | . . . . | . . . . | . . . .
@@ -2211,7 +2240,7 @@ Music.tracks.boss = {
     `,
   },
   ch: {
-    lead: { w: 'saw', vol: 0.17, a: 0.012, d: 0.1, s: 0.65, r: 0.04, g: 0.85, lp: 2700, bend: -0.4, bendT: 0.05, vib: [6, 16, 0.18], pan: 0.05, bars: `
+    lead: { w: 'saw', vol: 0.26, a: 0.012, d: 0.1, s: 0.65, r: 0.04, g: 0.85, lp: 2700, bend: -0.4, bendT: 0.05, vib: [6, 16, 0.18], pan: 0.05, bars: `
         . . . . | . . . . | . . . . | . . . .
         . . . . | . . . . | . . . . | . . . .
         C5 C5 . C5 | Eb5 - . . | G5 - - - | . . . .
@@ -2231,7 +2260,7 @@ Music.tracks.boss = {
         D6 - - - | - - - - | B5 - - - | G5 - - -
         G5 - - - | B5 - - - | D6 - - - | F6 - - -
       ` },
-    harm: { w: 'pulse25', vol: 0.085, a: 0.012, d: 0.1, s: 0.65, r: 0.04, g: 0.85, lp: 2500, pan: 0.3, bars: `
+    harm: { w: 'pulse25', vol: 0.13, a: 0.012, d: 0.1, s: 0.65, r: 0.04, g: 0.85, lp: 2500, pan: 0.3, bars: `
         . . . . | . . . . | . . . . | . . . .
         . . . . | . . . . | . . . . | . . . .
         G4 - . G4 | - - . . | D#5 - - - | . . . .
@@ -2367,7 +2396,7 @@ Music.tracks.bossFinal = {
     `,
   },
   ch: {
-    lead: { w: 'saw', vol: 0.17, a: 0.012, d: 0.12, s: 0.65, r: 0.05, g: 0.9, lp: 3000, bend: -0.4, bendT: 0.05, vib: [6.2, 18, 0.16], echo: [0.1, 3, 0.3], pan: 0.05, bars: `
+    lead: { w: 'saw', vol: 0.24, a: 0.012, d: 0.12, s: 0.65, r: 0.05, g: 0.9, lp: 3000, bend: -0.4, bendT: 0.05, vib: [6.2, 18, 0.16], echo: [0.1, 3, 0.3], pan: 0.05, bars: `
         . . . . | . . . . | . . . . | . . . .
         . . . . | . . . . | . . . . | . . . .
         A4 - - D5 | F5 - - - | A5 - - - | - - - -
@@ -2395,7 +2424,7 @@ Music.tracks.bossFinal = {
         E5 - - A5 | C#6 - - - | E6 - - - | - - - -
         D6 - - C#6 | A5 - - - | E5 - - - | - - - -
       ` },
-    harm: { w: 'pulse25', vol: 0.085, a: 0.012, d: 0.12, s: 0.65, r: 0.05, g: 0.9, lp: 2600, pan: 0.3, bars: `
+    harm: { w: 'pulse25', vol: 0.12, a: 0.012, d: 0.12, s: 0.65, r: 0.05, g: 0.9, lp: 2600, pan: 0.3, bars: `
         . . . . | . . . . | . . . . | . . . .
         . . . . | . . . . | . . . . | . . . .
         . . . . | . . . . | . . . . | . . . .
@@ -2423,7 +2452,7 @@ Music.tracks.bossFinal = {
         C#5 - - - | A5 - - - | - - - - | - - - -
         - - - - | E5 - - - | C#5 - - - | - - - -
       ` },
-    trem: { w: 'saw', vol: 0.08, a: 0.05, d: 0.3, s: 0.9, r: 0.1, g: 1, lp: 1700, trem: [11, 0.5], det: 7, pan: -0.3, bars: `
+    trem: { w: 'saw', vol: 0.1, a: 0.05, d: 0.3, s: 0.9, r: 0.1, g: 1, lp: 1700, trem: [11, 0.5], det: 7, pan: -0.3, bars: `
         . . . . | . . . . | . . . . | . . . .
         . . . . | . . . . | . . . . | . . . .
         . . . . | . . . . | . . . . | . . . .
@@ -2451,7 +2480,7 @@ Music.tracks.bossFinal = {
         E5 - - - | - - - - | - - - - | - - - -
         - - - - | - - - - | - - - - | - - - -
       ` },
-    arp: { w: 'pulse12', vol: 0.14, a: 0.002, d: 0.09, s: 0.45, r: 0.03, g: 0.7, pan: -0.3, bars: `
+    arp: { w: 'pulse12', vol: 0.17, a: 0.002, d: 0.09, s: 0.45, r: 0.03, g: 0.7, pan: -0.3, bars: `
         . . . . | . . . . | . . . . | . . . .
         . . . . | . . . . | . . . . | . . . .
         . . . . | . . . . | . . . . | . . . .
