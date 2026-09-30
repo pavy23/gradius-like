@@ -3,6 +3,8 @@
 Gradius 스타일의 **도트 그래픽 횡스크롤 슈팅 게임**입니다. 설치·빌드 없이 브라우저에서 바로 플레이됩니다.
 (순수 JavaScript + Canvas 2D, 외부 라이브러리·이미지·오디오 파일 없음 — 그래픽과 사운드는 모두 코드로 생성)
 
+**▶ [바로 플레이하기](https://pavy23.github.io/gradius-like/)** — 설치 없이 브라우저에서 실행됩니다 (GitHub Pages, 화면을 한 번 클릭하면 소리가 켜집니다).
+
 > 원작과 **무관한 독자 창작물**입니다. 게임 이름, 스프라이트, 효과음, BGM은 모두 이 저장소에서 새로 만들었습니다.
 > 원작에서 참고한 것은 게임 *구조*(7개 스테이지 구성, 파워업 미터, 체크포인트 방식 등)뿐입니다.
 
@@ -20,7 +22,7 @@ Gradius 스타일의 **도트 그래픽 횡스크롤 슈팅 게임**입니다. �
 | 로컬 | `index.html`을 브라우저에서 열기 (더블클릭). 서버 불필요 |
 | 로컬 서버 | `npx serve .` 또는 `python3 -m http.server` 후 `http://localhost:8000` |
 | 단일 파일 | `node tools/bundle.js` → `dist/nova-lancer.html` 한 파일로 배포 가능 |
-| GitHub Pages | 저장소 Settings → Pages → *Deploy from a branch* → 브랜치 / `(root)` 선택 |
+| GitHub Pages | 저장소 **Settings → Pages → Build and deployment → Source: *Deploy from a branch*** → 게임 파일이 있는 브랜치(보통 `main`) / `/ (root)` → Save. 잠시 후 `https://<계정>.github.io/gradius-like/`로 열립니다. 빌드가 필요 없어 `.nojekyll`을 넣어 Jekyll 처리를 건너뜁니다 |
 
 권장: 최신 Chrome / Edge / Firefox / Safari (테스트는 Chromium 기준).
 게임 화면을 한 번 클릭하면 키보드 입력이 활성화됩니다(iframe 안에서도 동일).
