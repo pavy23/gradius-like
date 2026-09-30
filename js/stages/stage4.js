@@ -825,7 +825,7 @@
           const q = Math.sqrt(x * x + y * y);
           if (q > r + 0.3) continue;
           const solid = q < r * 0.45;
-          if (solid || ((x + y) & 1) === 0 || (q < r * 0.75 && ((x * 3 + y) & 3) === 0)) d.px(c + x, c + y, solid ? '#2a1236' : '#331642');
+          if (solid || ((x + y) & 1) === 0 || (q < r * 0.75 && ((x * 3 + y) & 3) === 0)) d.px(c + x, c + y, solid ? '#8a4262' : '#7a3a5c');
         }
       }
     });
@@ -840,7 +840,7 @@
       const k = Math.min(4, Math.floor(life * 5));
       const y = 194 - life * 120;
       const x = ((((s.x - camX * s.par + life * 16 + Math.sin(t * 0.02 + s.ph) * 4) % (W + 80)) + W + 80) % (W + 80)) - 40;
-      Sprites.draw(ctx, 's4_smoke_' + k, Math.round(x), Math.round(y), { alpha: Math.min(1, (1 - life) * 1.6) * 0.75 });
+      Sprites.draw(ctx, 's4_smoke_' + k, Math.round(x), Math.round(y), { alpha: Math.min(1, (1 - life) * 1.6) * 0.32 });
     }
   };
 

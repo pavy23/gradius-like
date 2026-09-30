@@ -290,6 +290,8 @@
   }
   s5_bakeEye('s5_eyeball', 's5_eyelid', 22, { dark: '#3a1466', mid: '#6a34a4', mid2: '#8a46c6', lite: '#a468d8' });
   s5_bakeEye('s5_meyeball', 's5_meyelid', 26, { dark: '#2a0c48', mid: '#5a2290', mid2: '#7a2ea0', lite: '#a95ad4' });
+  // capsule-carrying eye pods wear a red / orange lid ring
+  Sprites.recolor('s5_eyelid', 's5_eyelid_c', { '#3a1466': '#7a1020', '#6a34a4': '#d02838', '#8a46c6': '#f04a3a', '#a468d8': '#ff9a5a', '#160a2a': '#2a0810' });
 
   // leech: undulating parasite (faces left). 4 frames, carrier variant is red / orange
   const LEECH = { out: '#06202a', dark: '#0e5a6c', mid: '#1ca0a8', lite: '#64e0d0', belly: '#f2e2a0', bellyD: '#c8a860', mouth: '#e03a4a', mouthD: '#801428', tooth: '#ffffff', eye: '#ffe646' };
@@ -702,7 +704,7 @@
         s5_disc(c, Math.round(e.x), Math.round(e.y), 11 + e.charge * 2);
         c.globalAlpha = 1;
       }
-      Sprites.draw(c, 's5_eyelid', e.x, e.y, { frame: clamp(Math.round(e.lid * 3), 0, 3), flash: fl });
+      Sprites.draw(c, e.carry ? 's5_eyelid_c' : 's5_eyelid', e.x, e.y, { frame: clamp(Math.round(e.lid * 3), 0, 3), flash: fl });
     },
   };
 
