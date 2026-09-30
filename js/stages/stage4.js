@@ -346,6 +346,46 @@
     d.outline('k');
   });
 
+
+  /* ---- cinder bat: hangs from the ceiling like a cocoon, wakes when you pass, then hunts you ---- */
+  Sprites.painted('s4_bat', 18, 14, 4, (d, f) => {
+    const dark = '#2a1c28', mid = '#4c3450', hi = '#7a5a78', glow = '#ff8a2c';
+    if (f === 0) {
+      // hanging, head down (drawn upside-down on purpose: feet on the ceiling)
+      d.poly([[5, 0], [12, 0], [14, 4], [13, 9], [9, 13], [4, 9], [3, 4]], dark);
+      d.poly([[6, 1], [11, 1], [12, 4], [11, 8], [9, 11], [6, 8], [5, 4]], mid);
+      d.line(9, 2, 9, 10, dark);
+      d.px(7, 3, hi); d.px(6, 4, hi); d.px(11, 3, glow); d.px(12, 5, glow);
+      d.rect(5, 0, 2, 2, '#1c1218'); d.rect(11, 0, 2, 2, '#1c1218');
+      d.px(7, 10, 'y'); d.px(11, 10, 'y'); d.px(7, 11, 'r'); d.px(11, 11, 'r');
+    } else {
+      // flying, facing left; f=1 wings up, f=2 wings down, f=3 level
+      const sgn = f === 1 ? -1 : f === 2 ? 1 : 0;
+      const wingPoly = (base, tipX, tipY, rearX, rearY, col) => d.poly([[8, base], [tipX, tipY], [rearX, rearY], [10.5, base + 1.5]], col);
+      if (sgn !== 0) {
+        // far wing (darker, behind), then the near wing with a glowing leading edge
+        wingPoly(7, 15, 7 + sgn * 5.5, 16, 7 + sgn * 1.5, dark);
+        wingPoly(7, 12.5, 7 + sgn * 7, 15, 7 + sgn * 3, mid);
+        d.line(8, 7, 12, 7 + sgn * 6.5, glow);
+        d.line(11, 7.5, 14, 7 + sgn * 3.5, dark);
+      } else {
+        d.poly([[8, 6], [17, 4.5], [17.5, 7], [15, 9], [10.5, 8.5]], dark);
+        d.poly([[9, 6.5], [16, 5], [16, 7], [14, 8.2], [10.5, 8]], mid);
+        d.line(8, 6, 17, 4.5, glow);
+        d.line(11, 8, 14, 6.8, dark);
+      }
+      d.ellipse(9, 8, 3.2, 2.4, dark);
+      d.ellipse(9, 8, 2.2, 1.6, mid);
+      d.circle(5, 7.5, 2.4, dark);
+      d.circle(5, 7.5, 1.6, mid);
+      d.poly([[3, 5], [3.8, 2.2], [5.6, 5]], dark);          // ear
+      d.poly([[5.2, 5], [6.4, 2.6], [7.4, 5.4]], dark);      // second ear
+      d.px(4, 7, 'y'); d.px(6, 7, 'y'); d.px(4, 8, 'r'); d.px(6, 8, 'r');
+      d.hline(8, 10, 11, dark);   // feet
+    }
+    d.outline('#12080e');
+  });
+
   /* ---- stalactite trap (ceiling spike that drops when you pass) ---- */
   Sprites.painted('s4_stal', 13, 24, 2, (d, f) => {
     d.poly([[0, 0], [12, 0], [10, 8], [7, 18], [6, 23], [5, 18], [2, 8]], 'e');
@@ -1206,6 +1246,57 @@
     },
   };
 
+
+  /* ---- cinder bat: ambush from the ceiling, then a short homing hunt ---- */
+  const s4_turnTo = (cur, want, maxTurn) => {
+    let d = want - cur;
+    while (d > Math.PI) d -= TAU;
+    while (d < -Math.PI) d += TAU;
+    return cur + clamp(d, -maxTurn, maxTurn);
+  };
+  ENEMIES.s4_bat = {
+    w: 10, h: 9, hp: 2, score: 200, attach: 'ceil', sink: 0, expl: 'm',
+    spr: () => 's4_bat',
+    init(e, o) {
+      e.flipY = false;
+      e.st = 0;
+      e.arm = o.arm || 84;
+      e.wake = 0;
+      e.spd = o.speed || 1.55;
+      e.life = 0;
+      e.ang = Math.PI * 0.5;
+    },
+    update(e) {
+      const P = G.player;
+      if (e.st === 0) {
+        e.frame = 0;
+        if (P.alive && Math.abs(P.x - e.x) < e.arm && e.x > 30 && e.x < W - 10 && P.y > e.y + 10) { e.st = 1; e.wake = 26; }
+      } else if (e.st === 1) {
+        e.frame = 0;
+        if (--e.wake <= 0) {
+          e.st = 2;
+          e.attach = null;
+          e.vx = -G.camSpeed;
+          e.vy = 0.6;
+          e.ang = Math.PI * 0.5;
+        }
+      } else {
+        e.life++;
+        e.frame = 1 + ((e.t >> 2) % 3);
+        const want = e.life > 190 ? -Math.PI * 0.75 : Math.atan2(P.y - e.y, P.x - e.x);
+        e.ang = s4_turnTo(e.ang, want, 0.045);
+        e.vx = Math.cos(e.ang) * e.spd;
+        e.vy = Math.sin(e.ang) * e.spd;
+        e.flipX = e.vx > 0.1;
+      }
+    },
+    draw(e, c) {
+      const shake = e.st === 1 ? ((e.t >> 1) & 1 ? 1 : -1) : 0;
+      Sprites.draw(c, 's4_bat', e.x + shake, e.y - (e.st === 0 || e.st === 1 ? 2 : 0), { frame: e.frame || 0, flipX: e.flipX, flash: e.flash > 0 });
+      if (e.st === 1 && (e.t >> 1) & 1) { c.fillStyle = '#ffe646'; c.fillRect(Math.round(e.x - 3), Math.round(e.y + 5), 2, 1); c.fillRect(Math.round(e.x + 1), Math.round(e.y + 5), 2, 1); }
+    },
+  };
+
   /* ---- bomb lobbed by the Iron Maiden: lands, splashes, throws an ember fan ---- */
   ENEMIES.s4_bomb = {
     w: 9, h: 9, hp: 2, score: 100, fps: 7, expl: 's',
@@ -1355,7 +1446,6 @@
           e.rage = true;
           e.parts[3].vuln = true;
           sfx('coreOpen');
-          G.showBanner(['IRON MAIDEN', 'CORE EXPOSED'], 70);
         }
       }
     },
@@ -1610,6 +1700,7 @@
       S.ceil(610, 's4_vent', { first: 70, every: 200, burst: 3 });
       squad(640, 'diver', { n: 3, gap: 26, at: 0.15, dy: 14, carry: 'last' });
       S.ceil(690, 'turret');
+      S.ceil(725, 's4_bat');
 
       /* ---- B: burning forest (checkpoint 820) ---- */
       helix(720, { n: 5, gap: 12, at: 0.25, amp: 22 });
@@ -1630,7 +1721,9 @@
       wisp(1700, { n: 5, gap: 13, at: 0.3, amp: 24, shoot: 90 });
       wisp(1750, { n: 6, gap: 12, at: 0.5, amp: 26, carry: 'last' });
       S.ceil(1830, 's4_vent', { first: 70, every: 160, burst: 3 });
-      S.ceil(1890, 'turret');
+      S.ceil(1902, 'turret');
+      S.ceil(1868, 's4_bat');
+      S.ceil(1884, 's4_bat');
       wisp(1900, { n: 5, gap: 12, at: 0.4, amp: 30 });
       squad(1940, 'diver', { n: 4, gap: 18, at: 0.15, dy: 12 });
 
@@ -1639,6 +1732,7 @@
       S.ceil(2075, 'turret');
       wisp(2010, { n: 6, gap: 13, at: 0.5, amp: 24, carry: 'last' });
       wisp(2190, { n: 5, gap: 12, at: 0.4, amp: 30, shoot: 80 });
+      S.ceil(2215, 's4_bat');
       squad(2110, 'spinner', { n: 5, gap: 12, dirY: 1, turnX: 140 });
 
       /* ---- Iron Maiden hall (checkpoint 2300) ---- */
@@ -1655,6 +1749,7 @@
       S.ceil(3730, 's4_vent', { first: 40, every: 240, burst: 3 });
       squad(3700, 'spinner', { n: 4, gap: 12, dirY: 1, turnX: 140 });
       wisp(3780, { n: 5, gap: 13, at: 0.45, amp: 24, carry: 'last', shoot: 100 });
+      S.ceil(3812, 's4_bat');
       wisp(3900, { n: 5, gap: 13, at: 0.5, amp: 20, carry: 'last' });
 
       // safety net: nothing of the mid-boss may still be around when the boss sequence starts

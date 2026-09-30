@@ -132,7 +132,7 @@ starts. Requirements:
 { length: 4200,
   floor: [ {type:'flat',x0,x1,h}, {type:'slope',x0,x1,h0,h1}, {type:'hill',x,w,h,shape:'round'|'tri'|'mesa'|'cos',top},
            {type:'volcano',x,w,h,crater:{w,d}}, {type:'noise',x0,x1,base,amp,scale,seed,edge},
-           {type:'steps',x0,x1,h0,dh,stepW}, {type:'pillar',x,w,h}, {type:'fn',x0,x1,fn:(x)=>h} ],
+           {type:'steps',x0,x1,h0,dh,stepW}, {type:'pillar',x,w,h} (x = centre), {type:'fn',x0,x1,fn:(x)=>h} ],
   ceil:  [ ...same, heights measured from the top... ],
   shapes(g, T) { g.fillRect(...); g.beginPath(); ...; g.fill(); },   // extra solid shapes (mask canvas, world coords)
   decorate(g, T) { ...paint on the skinned terrain canvas (world coords), e.g. trees, glows... },

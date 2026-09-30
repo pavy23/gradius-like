@@ -83,8 +83,8 @@ const Terrain = (() => {
       return f.h0 + Math.floor((x - f.x0) / f.stepW) * f.dh;
     },
     fn: (f) => (x) => (x >= f.x0 && x <= f.x1 ? f.fn(x) : 0),
-    /** vertical column / pillar: {x,w,h} */
-    pillar: (f) => (x) => (x >= f.x && x < f.x + f.w ? f.h : 0),
+    /** vertical column / pillar centred on x: {x,w,h} (a flat-topped block w px wide) */
+    pillar: (f) => (x) => (x >= f.x - f.w / 2 && x < f.x + f.w / 2 ? f.h : 0),
   };
 
   /* ---------------- noise helpers for textures ---------------- */

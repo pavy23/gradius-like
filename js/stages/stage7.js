@@ -1,10 +1,12 @@
 'use strict';
 /* =============================================================
- * STAGE 7 — FORTRESS  (final stage)
- * outer hull run -> hangar -> reactor corridors (laser gates,
- * crushers, Electronic Cage mid-boss) -> final approach -> the
- * BRAIN in its glass chamber (unique final boss "s7_brain").
- * All art is original and generated in code.
+ * STAGE 7 — FORTRESS  (final stage, scroll 0.8, boss at camX 5040)
+ * outer hull run -> hangar (bays, belts, gantries, crane) -> reactor
+ * hall with the Electronic Cage mid-boss -> laser gates and crushers
+ * -> final approach (turret rows, racks, homing missiles) -> recovery
+ * -> the BRAIN in its glass chamber (unique final boss "s7_brain").
+ * All art is original and generated in code. Everything is prefixed
+ * s7_ (sprites, ENEMIES) and wrapped in this IIFE.
  * ============================================================= */
 (function stage7() {
   /* ---------- shared palette (violet guard armour, cold gunmetal hull) ---------- */
@@ -1311,7 +1313,7 @@
   };
 
   /* =============================================================
-   * MECHANISMS — laser gates and crushers (moving terrain)
+   * MECHANISMS — laser gates, crushers and a gantry crane (moving terrain)
    * ============================================================= */
   /** jagged energy column between two points on x (vertical) */
   function s7column(c, x, y0, y1, t, cols, wobble) {
@@ -1440,6 +1442,52 @@
       }
       const hy = wallY + dirY * (ext - 8) + shake;
       Sprites.draw(c, 's7_phead', x, hy, { frame: e.warn && ((e.t >> 2) & 1) ? 1 : 0, flipY: e.up });
+    },
+  };
+
+  /** gantry crane: a hazard-striped load on a cable that trolleys side to side along a ceiling rail
+   *  (invulnerable moving block; its height never changes, so the lane underneath stays >= 76 px) */
+  ENEMIES.s7_crane = {
+    w: 34, h: 30, hp: 99999, score: 0, invuln: true, expl: 's', keep: false,
+    init(e, o) {
+      e.wx0 = e.wx;
+      e.base = G.terrain.ceilBottom(e.wx);
+      e.amp = o.amp || 26;
+      e.period = o.period || 240;
+      e.phase = o.phase || 0;
+      e.ext = 8 + (o.stroke || 56);
+      e.y = e.base;
+      e.parts = [
+        { name: 'load', ox: 0, oy: e.ext - 8, w: 26, h: 14, hp: 99999, vuln: false },
+        { name: 'cable', ox: 0, oy: (e.ext - 16) / 2, w: 6, h: e.ext - 16, hp: 99999, vuln: false },
+      ];
+    },
+    update(e) {
+      e.wx = e.wx0 + Math.sin(((e.t + e.phase) / e.period) * TAU) * e.amp;
+    },
+    draw(e, c) {
+      const x = Math.round(e.x), y0 = e.base;
+      // rail with tick marks
+      const rx0 = Math.round(e.wx0 - e.amp - 22 - G.camX), rx1 = Math.round(e.wx0 + e.amp + 22 - G.camX);
+      for (let rx = Math.max(0, rx0); rx <= Math.min(W - 1, rx1); rx++) {
+        c.fillStyle = rx % 6 < 2 ? '#0a0e16' : '#8ea4c4';
+        c.fillRect(rx, y0 - 2, 1, 1);
+        c.fillStyle = '#1a2233';
+        c.fillRect(rx, y0 - 1, 1, 1);
+      }
+      // trolley, cable, load
+      c.fillStyle = '#0c0c18';
+      c.fillRect(x - 8, y0 - 4, 16, 6);
+      c.fillStyle = '#54698a';
+      c.fillRect(x - 7, y0 - 3, 14, 4);
+      c.fillStyle = '#ffd430';
+      c.fillRect(x - 5, y0 - 2, 3, 2);
+      const rl = Math.round(e.ext - 16);
+      c.fillStyle = '#0c0c18';
+      c.fillRect(x - 2, y0, 4, rl);
+      c.fillStyle = '#9eaac0';
+      c.fillRect(x - 1, y0, 2, rl);
+      Sprites.draw(c, 's7_phead', x, y0 + e.ext - 8, { frame: 0 });
     },
   };
 
@@ -2007,6 +2055,8 @@
       switch (e.phase) {
         case 'enter':
           e.x += (e.homeX - e.x) * 0.04 - 0.12;
+          // the chamber slides in over the right side of the arena: shove the ship ahead of it instead of crushing it
+          if (P.alive && P.x > e.x - 80) P.x = Math.max(14, e.x - 80);
           if (e.x <= e.homeX + 0.4) {
             e.x = e.homeX;
             e.phase = 'p1';
@@ -2307,13 +2357,14 @@
 
       /* ---- 2. HANGAR: bays, gantry turrets, belts ---- */
       S.wave(1225, 's7_drone', { n: 4, gap: 16, y: 110, mode: 'sine', amp: 24 });
-      S.ceil(1245, 's7_gun');
+      S.ceil(1275, 's7_gun');
       S.ground(1290, 's7_bay', { count: 3 });
       S.ceil(1337, 's7_gun');
       S.ground(1400, 's7_belt', { len: 108, dir: -1 });
       S.ceil(1421, 's7_twin');
       S.wave(1330, 'spinner', { n: 5, gap: 12, y: 140, dirY: -1, turnX: 120 });
-      S.ceil(1470, 's7_gun');
+      S.ceil(1447, 's7_gun');
+      S.fixed(1535, 112, 's7_crane', { amp: 22, period: 260, stroke: 44 });
       S.ground(1500, 's7_bay', { count: 4, carry: true });
       S.ground(1600, 's7_walker', { dir: -1 });
       S.ceil(1620, 's7_rapid');

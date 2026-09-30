@@ -218,6 +218,39 @@
   };
   Sprites.painted('s2_queen', 70, 46, 2, s2_queenFrame);
 
+  // --- rune cannon: a stone dome with an amber gem (barrel is drawn in code) ---
+  Sprites.painted('s2_cannon', 18, 11, 2, (d, f) => {
+    d.rect(1, 8, 16, 2, 'G');
+    d.rect(2, 7, 14, 1, 'x');
+    d.ellipse(9, 6, 6.4, 4.8, 'G');
+    d.ellipse(8.6, 5.7, 5.6, 4, 'x');
+    d.ellipse(8.2, 5.2, 4.4, 3, 'g');
+    d.poly([[4, 4], [6, 2], [10, 1], [7, 3], [5, 5]], 'W');
+    d.circle(9.5, 6, 2.3, 'd');
+    d.circle(9.5, 6, 1.6, f ? 'y' : 'O');
+    d.px(9, 5, f ? 'w' : 'o');
+    d.px(3, 8, '#3c8058'); d.px(4, 8, '#3c8058'); d.px(13, 8, '#24594a');
+    d.rect(2, 9, 14, 1, 'd');
+    d.outline('k');
+  });
+
+  // --- boulder crawler: a stone-shelled beetle with a glowing rune on its back (faces left) ---
+  Sprites.painted('s2_crawler', 15, 11, 4, (d, f) => {
+    for (const [bx, ph] of [[4, 0], [7, 2.1], [10, 4.2]]) {
+      const off = Math.round(Math.sin((f * Math.PI) / 2 + ph) * 1.7);
+      d.line(bx, 7, bx + off, 10, 'X');
+    }
+    d.ellipse(8, 4.5, 6.4, 3.9, 'G');
+    d.ellipse(7.6, 4.1, 5.6, 3.3, 'x');
+    d.ellipse(7, 3.4, 4.2, 2.1, 'g');
+    d.poly([[3, 3], [5, 1], [10, 1], [7, 2], [5, 3]], 'W');
+    d.hline(6, 11, 5, 'O');
+    d.hline(7, 10, 5, f & 1 ? 'y' : 'o');
+    d.ellipse(2.2, 5.6, 2.1, 1.8, 'g');
+    d.px(1, 5, 'r'); d.px(2, 5, 'R');
+    d.outline('k');
+  });
+
   // --- loose keystone: a stalactite of chiselled stone hanging from an arch (tip points down) ---
   Sprites.painted('s2_drop', 12, 19, 2, (d, f) => {
     d.poly([[1, 0], [10, 0], [9, 5], [8, 11], [7, 16], [6, 18], [5, 16], [4, 11], [2, 5]], 'G');
@@ -371,7 +404,7 @@
     const rng = makeRng(2222);
     const floorAt = s2_profile(S2_FLOOR);
     const stones = [];
-    const lay = { stones, gates: [], hgates: [], pillars: {}, dolmens: [], floorAt };
+    const lay = { stones, gates: [], hgates: [], pillars: {}, dolmens: [], floorAt, floorRunes: [] };
     const gy = (x) => H - Math.round(floorAt(x));
 
     const push = (t, pts, o = {}) => {
@@ -481,6 +514,9 @@
     dolmen(3480, 54, 34, 88, 13, { rune: { g: 2 }, ang: -0.04 });
     altar(3575, { rune: { g: 4 } });
     dolmen(3655, 46, 30, 76, 12, { ang: 0.05 });
+
+    // runes carved into the face of the plateau along the boss arena (a ritual ring)
+    for (let x = 3702, i = 0; x < LEN - 90; x += 29, i++) lay.floorRunes.push({ x, y: 200, g: (i * 3 + 1) % 8 });
 
     // scatter of pebbles along the plateau for texture
     const pr = makeRng(77);
@@ -670,6 +706,7 @@
       st.rune.px = rx; st.rune.py = ry;
       s2_stampRune(P, T, rx, ry, st.rune.g);
     }
+    for (const r of lay.floorRunes) s2_stampRune(P, T, r.x, r.y, r.g);
     g.putImageData(img, 0, 0);
   }
 
@@ -1269,6 +1306,26 @@
     },
   };
 
+  /* ---- stone-styled variants of the generic turret and walker (same behaviour, own art) ---- */
+  function s2_barrel(c, cx, cy, ang, from, to, flash) {
+    const ca = Math.cos(ang), sa = Math.sin(ang);
+    for (let i = from; i <= to; i++) {
+      const x = Math.round(cx + ca * i), y = Math.round(cy + sa * i);
+      c.fillStyle = '#2a1a10';
+      c.fillRect(x - 1, y - 1, 3, 3);
+      c.fillStyle = i > to - 2 ? (flash ? '#ff5a3a' : '#5a3a20') : '#c88c58';
+      c.fillRect(x, y, 2, 2);
+    }
+  }
+  ENEMIES.s2_cannon = Object.assign({}, ENEMIES.turret, {
+    draw(e, c) {
+      const cy = e.y + (e.attach === 'ceil' ? 2 : -2);
+      s2_barrel(c, e.x, cy, e.ang, 3, 10, e.cd < 10);
+      Sprites.draw(c, 's2_cannon', e.x, e.y, { frame: e.cd < 10 ? 1 : 0, flipY: e.attach === 'ceil', flash: e.flash > 0 });
+    },
+  });
+  ENEMIES.s2_crawler = Object.assign({}, ENEMIES.walker, { spr: () => 's2_crawler', w: 12, h: 10, sink: 0 });
+
   /* ---- rune glow: decorative pulse over a glyph carved in the terrain ---- */
   ENEMIES.s2_rune = {
     w: 5, h: 7, hp: 1, score: 0, ghost: true, harmless: true, silentDeath: true,
@@ -1393,6 +1450,17 @@
       }
       if (e.age > e.leaveAt) e.phase = 'leave';
     },
+    /** look-ahead hook (test bots): body centre `dt` frames from now, from the moment the charge is telegraphed */
+    predict(e, dt) {
+      let x = e.x, mode = e.mode, wt = e.wt || 0;
+      if (e.phase === 'leave') return [x + 1.4 * dt, e.y - 0.35 * dt];
+      for (let i = 0; i < dt; i++) {
+        if (mode === 'windup') { if (--wt <= 0) mode = 'dash'; }
+        else if (mode === 'dash') { x -= 3.6; if (x < -70) { mode = 'return'; x = W + 80; } }
+        else if (mode === 'return') { x += (e.homeX - x) * 0.045 - 0.3; if (x <= e.homeX + 1) mode = 'hover'; }
+      }
+      return [x, e.y];
+    },
     onPartDeath(e, p) {
       if (p.name === 'core') G.kill(e);
       else sfx('explodeM');
@@ -1453,7 +1521,8 @@
       let gid = 0; // every formation gets an id (stream bonus for shooting down all of it)
       const sw = (x, o) => S.wave(x, 's2_swarm', Object.assign({ gid: 'w' + ++gid }, o));
 
-      /* ---- ambient glyph glow on the carved runes ---- */
+      /* ---- ambient glyph glow on the carved runes (menhirs, lintels and the arena floor) ---- */
+      for (const r of lay.floorRunes) S.fixed(r.x, r.y, 's2_rune', { g: r.g, ph: r.x * 0.37 });
       for (const st of lay.stones) {
         if (st.rune && st.rune.px !== undefined) S.fixed(st.rune.px, st.rune.py, 's2_rune', { g: st.rune.g, ph: (st.seed % 63) / 10 });
       }
@@ -1466,15 +1535,15 @@
 
       /* ---- outer ring ---- */
       S.fixed(698, 112, 's2_sentinel', { reach: 22 });
-      S.ground(625, 'walker', { dir: -1 });
-      S.ground(557, 'turret');
+      S.ground(625, 's2_crawler', { dir: -1 });
+      S.ground(557, 's2_cannon');
       sw(560, { pat: 'swoop', n: 12, gap: 5, y: 20, y0: -14, y1: 120, per: 170, speed: 1.6 });
       sw(650, { pat: 'braid', n: 16, gap: 4, y: 48, amp: 14, per: 90, speed: 1.7, strands: 3, carry: 'last' });
       sw(980, { pat: 'converge', n: 10, gap: 6, y: 38, ty: 150, T: 100, speed: 1.7 });
       sw(1050, { pat: 'converge', n: 10, gap: 6, y: 172, ty: 60, T: 100, speed: 1.7, carry: 'last' });
       sw(1080, { pat: 'lattice', n: 18, gap: SAME, y: 42, rows: 3, rowGap: 14, amp: 6, per: 120, speed: 1.6, colGap: 9 });
 
-      S.fixed(1226, lay.gates[0].top - 5, 'turret');   // on the trilithon's lintel
+      S.fixed(1226, lay.gates[0].top - 5, 's2_cannon');   // on the trilithon's lintel
       /* ---- hanging gates ---- */
       S.fixed(1385, 118, 's2_orbiter', { orbs: 3, r: 19 });
       sw(1300, { pat: 'loop', n: 12, gap: 5, y: 142, amp: 16, per: 60, speed: 1.6, strands: 1, carry: 'last' });
@@ -1502,7 +1571,7 @@
       /* ---- hanging arcade ---- */
       sw(2900, { pat: 'braid', n: 16, gap: 4, y: 142, amp: 30, per: 110, speed: 1.6 });
       sw(3060, { pat: 'sine', n: 10, gap: 6, y: 112, amp: 18, per: 120, speed: 1.5, carry: 'last' });
-      S.ceil(3125, 'turret');   // under the keystone of the middle arch
+      S.ceil(3125, 's2_cannon');   // under the keystone of the middle arch
       S.fixed(3235, 100, 's2_sentinel', { reach: 18 });
       S.ceil(3032, 's2_drop'); S.ceil(3162, 's2_drop'); S.ceil(3262, 's2_drop');
 
