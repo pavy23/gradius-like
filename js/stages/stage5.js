@@ -747,9 +747,10 @@
     },
     update(e) {
       const T = G.terrain;
-      const wx = G.camX + e.x;
+      const wx = G.camX + e.x + e.vx;
       e.mid += (s5_mid(wx) - e.mid) * 0.07;
-      e.y = clamp(e.mid + e.rel + Math.sin(e.t * e.freq + e.ph) * e.amp, T.ceilBottom(wx) + 8, T.floorTop(wx) - 8);
+      const ty = clamp(e.mid + e.rel + Math.sin(e.t * e.freq + e.ph) * e.amp, T.ceilBottom(wx) + 8, T.floorTop(wx) - 8);
+      e.vy = ty - e.y; // free fliers move by vx/vy (the engine adds them after update): the swim stays readable to an autopilot
     },
   };
 

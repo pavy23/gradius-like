@@ -35,6 +35,18 @@ Object.assign(G, {
         const g = T.floorTop(x) - T.ceilBottom(x);
         if (g < worst.gap) worst = { gap: g, x };
       }
+      // largest free vertical run per column also counts floating solids (lintels, islands)
+      let worstRun = { gap: H, x: 0 };
+      for (let x = 0; x < endX; x += 3) {
+        let best = 0, run = 0;
+        for (let y = 0; y < H - 14; y++) {
+          if (T.solid(x, y)) run = 0;
+          else { run++; if (run > best) best = run; }
+        }
+        if (best < worstRun.gap) worstRun = { gap: best, x };
+      }
+      out.info.narrowestRun = worstRun;
+      if (worstRun.gap < 84) warn(`largest free vertical run is only ${worstRun.gap}px at world x=${worstRun.x} (floating scenery blocks the way?)`);
       out.info.narrowestGap = worst;
       if (worst.gap < 84) warn(`corridor only ${worst.gap}px tall at world x=${worst.x} (want >= 84)`);
       const arena = T.minGap(st.bossX - 20, st.bossX + W);
@@ -89,7 +101,8 @@ Object.assign(G, {
         else if (!e.attach && !s.o.boss && !e.def.ghost && T.solid(s.cam + e.x, e.y) && e.x > W - 2) {
           warn(`'${s.type}' spawns inside terrain (camX=${s.cam}, y=${Math.round(e.y)})`);
         }
-        if (!e.attach && (e.y < 4 || e.y > H - 14) && !s.o.boss) warn(`'${s.type}' spawns at odd y=${Math.round(e.y)} (camX=${s.cam})`);
+        // entering from above/below the screen is fine; this only catches typos / NaN
+        if (!e.attach && !s.o.boss && (!(e.y > -90) || e.y > H + 90)) warn(`'${s.type}' spawns at odd y=${Math.round(e.y)} (camX=${s.cam})`);
         if (typeof e.def.spr === 'string' && !Sprites.has(e.def.spr)) warn(`enemy '${s.type}' uses missing sprite '${e.def.spr}'`);
       }
       out.info.byType = byType;

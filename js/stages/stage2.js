@@ -74,7 +74,7 @@
     return { y0, rows };
   }
 
-  /** the five rune glyphs (5x7) used on megaliths */
+  /** the eight rune glyphs (5x7) carved into megaliths, lintels and the arena floor */
   const S2_GLYPHS = [
     '#.#.#/.###./..#../..#../..#../..#../..#..',
     '.#.../.##../.#.#./.##../.#.../.#.../.#...',

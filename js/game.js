@@ -48,7 +48,7 @@ class StageBuilder {
    */
   wave(x, type, o = {}) {
     const n = o.n || 1;
-    const gap = o.gap || 10;
+    const gap = o.gap === undefined ? 10 : o.gap;
     return this._add(x, () => {
       for (let i = 0; i < n; i++) {
         let carry = o.carry === 'last' ? i === n - 1 : o.carry === 'first' ? i === 0 : o.carry === 'all' ? true : o.carry === i;
