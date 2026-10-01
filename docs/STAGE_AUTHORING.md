@@ -15,7 +15,6 @@ js/audio.js       Sound.sfx(name)      js/music.js  Music.play(name)
 js/player.js      Player class (weapons, power meter, options, shield)
 js/game.js        G (game object), StageBuilder, MODES, HUD
 js/enemies.js     ENEMIES registry: spinner wave diver bug turret walker hatch rocket
-js/bosses.js      ENEMIES.bigcore ("Guardian Core", stages 1-5 boss) — the reference boss
 js/stages/stageN.js   one file per stage (self-contained; see stage1.js as the reference)
 js/debug.js       G.lint(stageIndex), G.gallery(prefix)
 ```
@@ -45,6 +44,7 @@ STAGES.push({
   background: () => Backgrounds.make([...]),
   script(S) { ...events... },
   onReset(G) {},   // optional: called after every (re)start at a checkpoint
+  onLoad(G) {},    // optional: called once when the stage is loaded (black intro screen) - bake big sprites here
 });
 ```
 
@@ -61,7 +61,7 @@ S.ground(wx, 'type', {...opts})   // stands on the floor at WORLD x (spawned whe
 S.ceil(wx, 'type', {...opts})     // hangs from the ceiling at world x
 S.fixed(wx, y, 'type', {...})     // anchored to the world (moves with terrain) at screen y, no snapping
 S.at(x, () => {...})              // run any code when the camera reaches x (G.spawn, G.camTarget = ..., ...)
-S.boss(bossX, 'bigcore', {level:3})   // must appear exactly once, at st.bossX
+S.boss(bossX, 's3_colossus', {})  // must appear exactly once, at st.bossX
 S.banner(x, ['LINE1','LINE2'])
 ```
 `carry`: `'last' | 'first' | 'all' | index` → those members drop a power capsule when killed.
@@ -119,14 +119,15 @@ then on `G.bossDefeated(e)` all other enemies/bullets are wiped, an explosion ch
 starts. Requirements:
 
 * `onDeath(e){ G.bossDefeated(e); }` and `silentDeath:true` (the engine already plays the chain).
-  To keep the wreck visible during the chain push a `fx` of kind `'fn'` (see `bosses.js` `drawWreck`).
+  To keep the wreck visible during the chain push a `fx` of kind `'fn'` (see `drawWreck` of `s6_nucleus` in stage6.js).
 * `gauge(e) -> 0..1` remaining health for the HUD bar.
 * Attacks must stop when `!G.player.alive`; use `G.canFire`. Provide 2-3 distinct attack patterns and a
-  clear vulnerable window. Fight length for a basic ship ~35-60 s, for a fully powered ship ~15-25 s.
-* Every stage has its **own boss** (`s1_wyrm`, `s2_henge`, ... defined inside the stage file, like `s6_nucleus` and
-  `s7_brain`): same structure twice is boring, so a new boss must differ in *how it moves*, *what the weak point is*
-  and *what the player has to do*, not only in sprites and numbers. (`js/bosses.js`, the old shared "Guardian Core", is
-  kept as a reference implementation of the parts / gauge / wreck conventions.)
+  clear vulnerable window. Fight length (measured with `tools/bossbench.js`): basic ship ~35-60 s, mid-power ~15-30 s,
+  fully powered ship ~8-20 s. Phase changes should be gated (health floors / a no-damage transition) so firepower cannot skip them.
+* Every stage has its **own boss** (`s1_wyrm`, `s2_henge`, `s3_colossus`, `s4_phoenix`, `s5_maw`, `s6_nucleus`, `s7_brain`, each defined
+  inside its stage file): the same structure twice is boring, so a new boss must differ in *how it moves*, *what the weak point is*
+  and *what the player has to do*, not only in sprites and numbers. Read one of them as the reference for the parts / gauge / wreck /
+  phase-gate conventions.
 * Boss parts must carry `max` (health) on the parts you can damage and `vuln:false` on armour, so the HUD gauge and
   `tools/bot.js` (which aims at `vuln` parts and dodges every non-`harmless` part box) work without special cases.
   Parts may move: update `p.ox / p.oy` every frame (chains, orbiting stones ...); keep `w/h` equal to what is drawn.
