@@ -123,7 +123,13 @@ starts. Requirements:
 * `gauge(e) -> 0..1` remaining health for the HUD bar.
 * Attacks must stop when `!G.player.alive`; use `G.canFire`. Provide 2-3 distinct attack patterns and a
   clear vulnerable window. Fight length for a basic ship ~35-60 s, for a fully powered ship ~15-25 s.
-* `S.boss(bossX, 'bigcore', {level:1..5})` reuses the Guardian Core (palettes/HP/attacks per level).
+* Every stage has its **own boss** (`s1_wyrm`, `s2_henge`, ... defined inside the stage file, like `s6_nucleus` and
+  `s7_brain`): same structure twice is boring, so a new boss must differ in *how it moves*, *what the weak point is*
+  and *what the player has to do*, not only in sprites and numbers. (`js/bosses.js`, the old shared "Guardian Core", is
+  kept as a reference implementation of the parts / gauge / wreck conventions.)
+* Boss parts must carry `max` (health) on the parts you can damage and `vuln:false` on armour, so the HUD gauge and
+  `tools/bot.js` (which aims at `vuln` parts and dodges every non-`harmless` part box) work without special cases.
+  Parts may move: update `p.ox / p.oy` every frame (chains, orbiting stones ...); keep `w/h` equal to what is drawn.
 * Mid-bosses are ordinary high-HP enemies (`expl:'l'`, `dropCapsule` on death) that do not stop the scroll.
 
 ## 4. Terrain (`terrain: () => def`)
@@ -214,6 +220,14 @@ unpause tentacle cellPop electric stomp warp`. Music tracks: `stage1..stage7`, `
   Options: `--lint`, `--strict` (the mortal bot must clear too), `--from N`, `--url <file-or-url>`.
   The bot is an autopilot, not a human: it dodges bullets by short-horizon prediction, so a stage that it clears has
   no unavoidable hits, but human difficulty is higher. It cannot foresee growing hit boxes (geysers) or read telegraphs.
+* **Boss benchmark** — `node tools/bossbench.js <stage> [--power none|mid|full] [--runs 3] [--seed 1] [--god] [--trace]`
+  starts at the stage's last checkpoint, lets the bot fight the boss and reports the fight length, the bot's deaths and
+  what killed it (`--trace` prints the health gauge every 2 s, `--god` measures the pure damage race). Seeded, so runs
+  repeat. Targets: no upgrades 35-60 s, `mid` (speed 2, missile, double, 2 options) ~15-30 s, `full` (speed 5, missile,
+  laser, 4 options, shield) ~8-20 s.
+* **Boss contact sheet** — `node tools/bossshots.js <stage> --out sheet.png [--every 45] [--n 12] [--cols 3] [--scale 2]
+  [--power full] [--mortal]` saves ONE png with frames of the whole fight (WARNING, entrance, every attack, death
+  sequence), captioned with time / boss state / health. Open it and look: sprites, telegraphs, HUD overlaps.
 * **URL parameters**: `?stage=N` (start at the N-th registered stage, 1-based), `&god=1` (invulnerable), `&diff=easy|normal|hard`,
   `&debug=1` (entity counters), `&manual=1` (the page does not start its own loop; tests call `G.step()` / `G.render()`),
   `&auto=1|0` (auto-fire for this visit only), `&touch=1` (build the touch controls on a desktop), `&sens=1.3` (touch drag feel).
