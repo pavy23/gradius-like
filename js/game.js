@@ -133,8 +133,8 @@ const G = {
   toastMsg: '',
   toastT: 0,
   reduceFlash: false,
-  autoShot: false, // firing is automatic (default ON on touch-first devices, toggle: T / AUTO button / pad R3)
-  autoPref: '', // '1' / '0' once the player chose explicitly, '' = follow the device default
+  autoShot: true, // firing is automatic - ON by default everywhere (toggle: T / AUTO button / pad R3)
+  autoPref: '', // '1' / '0' once the player chose explicitly, '' = never chosen (= ON)
   hintT: 0, // countdown of the "drag anywhere" hint shown at the first touch play
   hinted: false,
   audioAnnounced: false,
@@ -167,9 +167,9 @@ const G = {
     STAGES.sort((a, b) => a.id - b.id);
     Input.init();
     this.reduceFlash = Store.get('nova.noflash', '0') === '1';
-    // auto-fire: an explicit choice wins, otherwise ON for touch-first devices (phones / tablets)
+    // auto-fire is ON unless the player switched it off (the choice is remembered)
     this.autoPref = Store.get('nova.auto', '');
-    this.autoShot = this.autoPref === '' ? this.coarsePointer() : this.autoPref === '1';
+    this.autoShot = this.autoPref !== '0';
 
     const q = new URLSearchParams(location.search);
     if (q.get('auto') === '1' || q.get('auto') === '0') this.autoShot = q.get('auto') === '1'; // per-visit override
@@ -267,14 +267,6 @@ const G = {
     this.modeT = 0;
     const md = MODES[m];
     if (md.enter) md.enter.call(this, arg);
-  },
-
-  coarsePointer() {
-    try {
-      return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
-    } catch (e) {
-      return false;
-    }
   },
 
   /** true while the player is on the touch screen (on-screen controls built and touched last): menus show touch wording */

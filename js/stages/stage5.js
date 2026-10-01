@@ -4,7 +4,7 @@
  * Inside a living alien body: a glistening flesh cavern with vein
  * networks, wall-anchored tentacles you can cut apart, polyp pods
  * that burst into spores, blinking eye pods, leech swimmers and
- * sticky membranes. Mid-boss: the Tentacle Mass. Boss: Guardian Core.
+ * sticky membranes. Mid-boss: the Tentacle Mass. Boss: the Maw Leviathan.
  *
  * Layout (camera x): A gullet 0-400 (calm intro) - B tentacle garden
  * 400-820 - C eye chamber 820-1200 - D throat with sticky membranes and
@@ -29,6 +29,10 @@
  *  s5_mass      mid-boss: six severable arms + an eye that is exposed while it
  *               spits spores or once every arm is gone [leaveX, homeX, eyeHp]
  *  s5_pulse     invisible controller (wall rim pulse, glints, cilia)
+ *  s5_maw       boss: a colossal jawed maw that plugs the end of the cavern. Armoured jaws (a row of fangs each) hinge on a wet
+ *               throat; the glowing core deep inside can only be hit through the gap between the teeth. It spits arcing
+ *               bile, then telegraphs a LUNGE (ghost of the closed maw + danger line + roar) and SNAPS shut; phase 2 adds
+ *               a tongue lash along the floor and spore rings, phase 3 double bites and bile volleys.
  * ============================================================= */
 (function stage5() {
   /* ------------------------------------------------------------
@@ -1080,6 +1084,1255 @@
     },
   };
 
+  /* =============================================================
+   * BOSS: MAW LEVIATHAN
+   *
+   * A colossal jawed maw plugs the end of the cavern. Two armoured jaws hinge on a wet throat; the glowing core
+   * hangs deep inside it and can only be hit through the gap between the teeth. The maw spits arcing bile, lunges
+   * and SNAPS (anything inside the mouth or the jaws at that instant dies), and later lashes a tongue along the
+   * floor, breathes spore rings and bites twice in a row.
+   *
+   *   art      jaws are baked at 41 opening angles (distance-field shaded flesh, ivory fangs); cheeks, throat, eye
+   *   geometry s5m_pt() maps a point of a jaw (s along the gum curve, v outward) to the screen for any opening
+   *            angle; the same function builds the hurting boxes, so what is drawn is what hurts
+   *   fight    enter -> open (attacks) -> wind (telegraph) -> lunge -> snap -> recover -> open ...  + roar between phases
+   * ============================================================= */
+  const S5M = {
+    HOME: 232, // x of the hinge line when the maw is at rest
+    START: 360, // where it waits behind the cavern wall (the fangs stay off screen)
+    P0: 7, // jaw pivot distance from the mouth axis with the jaws shut: the lips are pressed together
+    P1: 30, // ... and wide open: the head halves have slid apart to uncover the throat
+    L: 86, // jaw length along the gum line
+    TIP: 7, // distance between the closed gum line and the mouth axis at the tip (= P0: a shut maw is sealed along its length)
+    T0: 30,
+    T1: 13, // skin thickness at the hinge / near the tip
+    GUM: 5, // thickness of the pink gum lining
+    STEP: 1.25, // degrees per baked jaw frame
+    NF: 41, // baked frames: 0 .. 50 degrees
+    A_IDLE: 34,
+    A_WIDE: 45, // (re-solved below from the wanted tip gaps)
+  };
+  const S5M_SKIN = ['#1a0a38', '#2f1668', '#4c2a98', '#7448c4', '#a37af0', '#dcc4ff'];
+  const S5M_OUT = '#10062a';
+  const S5M_GUMC = ['#ffb0c8', '#f06a94', '#c8386a', '#7a1c48'];
+  const S5M_IV = { hi: '#ffffff', lit: '#f6edc8', mid: '#d8c894', shade: '#9a8858', dark: '#6a5a38' };
+  const S5M_RED = ['#12030c', '#2c0618', '#5a0c2a', '#8c1840', '#c42c58', '#ff6a8c'];
+  // fangs: [s along the gum curve, half base width, length, forward lean]
+  const S5M_FU = [[10, 3.2, 4, 0.4], [22, 3.6, 7, 0.8], [34, 4, 10, 1.2], [46, 4.2, 12, 1.6], [58, 4.4, 14, 2], [70, 4.6, 16, 2.6], [82, 5.2, 19, 5]];
+  const S5M_FL = [[16, 3.4, 5, 0.6], [28, 3.8, 8.5, 1], [40, 4.1, 11, 1.4], [52, 4.3, 13, 1.8], [64, 4.5, 15, 2.2], [76, 4.8, 17, 3.2]];
+
+  const s5m_rad = (d) => (d * Math.PI) / 180;
+  const s5m_toDeg = (a) => (a * 180) / Math.PI;
+  /** pivot distance from the mouth axis for a jaw opened by angle a (radians): the lips part during the first 14 degrees */
+  const s5m_P = (a) => S5M.P0 + (S5M.P1 - S5M.P0) * s5_smooth(clamp(s5m_toDeg(a) / 14, 0, 1));
+  /** distance from the mouth axis to the cheek lip (half the throat opening) */
+  const s5m_lip = (a) => s5m_P(a) - S5M.GUM + 1;
+  // the gum curve sinks toward the mouth axis, so the lining of a shut maw lies flat along the axis
+  const s5m_D = (s, P) => (s <= 0 ? 0 : (P - S5M.TIP) * Math.pow(s / S5M.L, 1.15));
+  const s5m_Dp = (s, P) => (s <= 0 ? 0 : ((P - S5M.TIP) * 1.15 * Math.pow(s / S5M.L, 0.15)) / S5M.L);
+  /** outward skin thickness at s: heavy at the hinge, slimmer in the middle, a nose bulb, a blunt rounded snout */
+  const s5m_T = (s) => {
+    if (s <= 0) return S5M.T0;
+    const u = Math.min(1, s / S5M.L);
+    let t = S5M.T0 + (S5M.T1 - S5M.T0) * Math.pow(u, 0.7) + 3.2 * Math.exp(-Math.pow((s - 70) / 9, 2));
+    const e = s - (S5M.L - 9);
+    if (e > 0) t *= Math.sqrt(Math.max(0, 1 - (e / 9) * (e / 9)));
+    return t;
+  };
+  // dorsal spikes on the outer edge: [s, height, lean]
+  const S5M_SPIKE = [[12, 6, 4], [27, 7, 4.5], [41, 8, 5], [55, 7, 4.5], [68, 6, 4]];
+  const S5M_EYE = [11, 18.5]; // eye on the upper jaw: [s, v] in jaw coordinates
+  /**
+   * Point of the UPPER jaw: s along the gum curve (0 at the pivot, L at the snout), v outward (up) from it, jaw opened by
+   * angle a (radians). Result in axis-centred coordinates relative to the hinge line (x right, y down, mouth axis = 0).
+   * The lower jaw is the mirror image (negate y).
+   */
+  function s5m_pt(s, v, a, out) {
+    const P = s5m_P(a), d = s5m_Dp(s, P), n = Math.sqrt(1 + d * d);
+    const x0 = -s - (v * d) / n, y0 = s5m_D(s, P) - v / n; // closed pose, relative to the pivot
+    const c = Math.cos(a), sn = Math.sin(a);
+    out[0] = x0 * c - y0 * sn;
+    out[1] = -P + x0 * sn + y0 * c;
+    return out;
+  }
+  /** polygons (upper-jaw convention) of one jaw at opening angle a: skin body, gum stripes, fangs */
+  function s5m_shapes(a, lower) {
+    const pt = (s, v) => s5m_pt(s, v, a, [0, 0]);
+    const out = [], inn = [];
+    for (let s = -12; s <= S5M.L + 0.01; s += 3) out.push(pt(s, s5m_T(s)));
+    for (let s = S5M.L; s >= -12; s -= 3) inn.push(pt(s, -S5M.GUM));
+    const stripe = (va, vb) => {
+      const p = [];
+      for (let s = -12; s <= S5M.L - 1; s += 3) p.push(pt(s, va));
+      for (let s = S5M.L - 1; s >= -12; s -= 3) p.push(pt(s, vb));
+      return p;
+    };
+    const gum = [stripe(0.6, -1.4), stripe(-1.4, -3.4), stripe(-3.4, -S5M.GUM - 0.4)];
+    const vb = -S5M.GUM + 0.6;
+    const fangs = (lower ? S5M_FL : S5M_FU).map(([s, hw, len, lean]) => {
+      const b0 = pt(s - hw, vb), b1 = pt(s + hw, vb), bm = pt(s, vb), tp = pt(s + lean, vb - len);
+      return { all: [b0, tp, b1], lit: [bm, b1, tp], shade: [b0, bm, tp], tip: tp };
+    });
+    const spikes = S5M_SPIKE.map(([sp, h, lean]) => {
+      const T = s5m_T(sp), b0 = pt(sp - 3.4, s5m_T(sp - 3.4) - 1.2), b1 = pt(sp + 3.4, s5m_T(sp + 3.4) - 1.2), bm = pt(sp, T - 1.2), tp = pt(sp - lean, T + h);
+      return { all: [b0, tp, b1], lit: [bm, b1, tp], shade: [b0, bm, tp] };
+    });
+    return { body: out.concat(inn), gum, fangs, spikes };
+  }
+  /** pixel-centre scanline walk over a polygon: row(y, xFrom, xTo) is called for every covered run */
+  function s5m_scan(pts, w, h, row) {
+    let y0 = Infinity, y1 = -Infinity;
+    for (const p of pts) { if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1]; }
+    const xs = [];
+    for (let y = Math.max(0, Math.floor(y0)); y <= Math.min(h - 1, Math.ceil(y1)); y++) {
+      const yc = y + 0.5;
+      xs.length = 0;
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[i], b = pts[(i + 1) % pts.length];
+        if ((a[1] <= yc && b[1] > yc) || (b[1] <= yc && a[1] > yc)) xs.push(a[0] + ((yc - a[1]) / (b[1] - a[1])) * (b[0] - a[0]));
+      }
+      xs.sort((p, q) => p - q);
+      for (let i = 0; i + 1 < xs.length; i += 2) {
+        const xa = Math.max(0, Math.round(xs[i])), xb = Math.min(w, Math.round(xs[i + 1]));
+        if (xb > xa) row(y, xa, xb);
+      }
+    }
+  }
+  const s5m_polyMask = (mask, w, h, pts) => s5m_scan(pts, w, h, (y, xa, xb) => mask.fill(1, y * w + xa, y * w + xb));
+  const s5m_polyFill = (buf, w, h, pts, col) => s5m_scan(pts, w, h, (y, xa, xb) => buf.fill(col, y * w + xa, y * w + xb));
+  function s5m_lineFill(buf, w, h, x0, y0, x1, y1, col) {
+    x0 = Math.round(x0); y0 = Math.round(y0); x1 = Math.round(x1); y1 = Math.round(y1);
+    const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+    let err = dx + dy;
+    for (let n = 0; n < 400; n++) {
+      if (x0 >= 0 && y0 >= 0 && x0 < w && y0 < h) buf[y0 * w + x0] = col;
+      if (x0 === x1 && y0 === y1) break;
+      const e2 = 2 * err;
+      if (e2 >= dy) { err += dy; x0 += sx; }
+      if (e2 <= dx) { err += dx; y0 += sy; }
+    }
+  }
+  /** chamfer distance (px) from every mask pixel to the nearest empty pixel */
+  function s5m_dist(mask, w, h) {
+    const d = new Float32Array(w * h);
+    for (let i = 0; i < d.length; i++) d[i] = mask[i] ? 1e4 : 0;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        let v = d[i];
+        if (!v) continue;
+        if (x > 0) v = Math.min(v, d[i - 1] + 1);
+        if (y > 0) {
+          v = Math.min(v, d[i - w] + 1);
+          if (x > 0) v = Math.min(v, d[i - w - 1] + 1.4);
+          if (x < w - 1) v = Math.min(v, d[i - w + 1] + 1.4);
+        }
+        d[i] = v;
+      }
+    }
+    for (let y = h - 1; y >= 0; y--) {
+      for (let x = w - 1; x >= 0; x--) {
+        const i = y * w + x;
+        let v = d[i];
+        if (!v) continue;
+        if (x < w - 1) v = Math.min(v, d[i + 1] + 1);
+        if (y < h - 1) {
+          v = Math.min(v, d[i + w] + 1);
+          if (x < w - 1) v = Math.min(v, d[i + w + 1] + 1.4);
+          if (x > 0) v = Math.min(v, d[i + w - 1] + 1.4);
+        }
+        d[i] = v;
+      }
+    }
+    return d;
+  }
+  /** css colour -> packed little-endian ABGR (cached) */
+  const S5M_C32 = {};
+  const s5m_c32 = (css) => {
+    let v = S5M_C32[css];
+    if (v === undefined) {
+      const c = Sprites.toRgb(css);
+      v = S5M_C32[css] = ((255 << 24) | (c[2] << 16) | (c[1] << 8) | c[0]) >>> 0;
+    }
+    return v;
+  };
+  /**
+   * Shade every masked pixel like an inflated pillow lit from the top left (height = rounded profile of the distance to
+   * the silhouette), dithered through a colour ramp. detail(x, y, q, lam) may return a colour override. Written straight
+   * into an ImageData buffer (this runs ~85 times while the stage loads, so it has to be cheap); the caller puts it.
+   */
+  function s5m_shade(d, mask, dist, w, h, ramp, R, detail) {
+    const z = new Float32Array(w * h);
+    for (let i = 0; i < z.length; i++) {
+      if (!mask[i]) continue;
+      const u = Math.min(1, Math.max(0, dist[i] - 0.6) / R);
+      z[i] = R * Math.sqrt(Math.max(0, 1 - (1 - u) * (1 - u)));
+    }
+    const img = d.g.createImageData(w, h), buf = new Uint32Array(img.data.buffer);
+    const rc = ramp.map(s5m_c32), ll = Math.hypot(0.5, 0.62, 0.6), n = ramp.length;
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const i = y * w + x;
+        if (!mask[i]) continue;
+        const zx = (z[i + 1] - z[i - 1]) * 0.5, zy = (z[i + w] - z[i - w]) * 0.5;
+        const lam = clamp((0.5 * zx + 0.62 * zy + 0.6) / (Math.sqrt(zx * zx + zy * zy + 1) * ll), 0, 1);
+        const q = clamp(Math.floor(lam * n * 1.05 + (BAYER4[(y & 3) * 4 + (x & 3)] - 0.5) * 0.9), 0, n - 1);
+        const ov = detail ? detail(x, y, q, lam) : null;
+        buf[i] = ov ? s5m_c32(ov) : rc[q];
+      }
+    }
+    return { img, buf };
+  }
+  const s5m_hash = (x, y) => {
+    let h = (x * 374761393 + y * 668265263) | 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  };
+
+  /** one jaw: 41 frames, the pivot / mouth axis sits at pixel (PX, PY) of every frame */
+  const S5M_JAW = {};
+  function s5m_bakeJaw(name, lower) {
+    const fy = lower ? -1 : 1;
+    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    for (let f = 0; f < S5M.NF; f += 5) {
+      const sh = s5m_shapes(s5m_rad(f * S5M.STEP), lower);
+      const all = sh.body.concat(...sh.fangs.map((q) => q.all), ...sh.spikes.map((q) => q.all));
+      for (const p of all) {
+        x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]);
+        y0 = Math.min(y0, fy * p[1]); y1 = Math.max(y1, fy * p[1]);
+      }
+    }
+    const PX = Math.ceil(-x0) + 4, PY = Math.ceil(-y0) + 4;
+    const CW = Math.ceil(x1) + PX + 4, CH = Math.ceil(y1) + PY + 4;
+    S5M_JAW[name] = { PX, PY, CW, CH };
+    const warts = [[26, 14, 2.2], [48, 11, 1.8], [64, 8, 1.4], [36, 19, 1.7], [4, 8, 2.1], [58, 15, 1.5]];
+    Sprites.painted(name, CW, CH, S5M.NF, (d, f) => {
+      const a = s5m_rad(f * S5M.STEP), sh = s5m_shapes(a, lower);
+      const toPx = (p) => [PX + p[0], PY + fy * p[1]];
+      const mask = new Uint8Array(CW * CH);
+      s5m_polyMask(mask, CW, CH, sh.body.map(toPx));
+      const dist = s5m_dist(mask, CW, CH);
+      const c = Math.cos(a), sn = Math.sin(a), Pa = s5m_P(a);
+      const detail = (x, y, q, lam) => {
+        // back to the closed-pose frame: s (along the jaw) and v (outward) of this pixel
+        const rx = x + 0.5 - PX, ry = fy * (y + 0.5 - PY) + Pa;
+        const xc = rx * c + ry * sn, yc = -rx * sn + ry * c;
+        const s = -xc, v = s5m_D(s, Pa) - yc;
+        if (v < -S5M.GUM - 1) return null;
+        // plate seams across the jaw (carved: dark line + light lip)
+        if (s > 6 && s < S5M.L - 7 && v > 2.5 && v < s5m_T(s) - 1.5) {
+          const g = (((s - 9) % 15) + 15) % 15;
+          if (g < 0.9) return S5M_SKIN[0];
+          if (g < 1.8 && q > 1) return S5M_SKIN[Math.min(5, q + 1)];
+        }
+        // eye socket (upper jaw only) with a raised brow
+        if (!lower) {
+          const ex = (s - S5M_EYE[0]) / 9.5, ey = (v - S5M_EYE[1]) / 7.2, rr = Math.sqrt(ex * ex + ey * ey);
+          if (rr < 1) return S5M_SKIN[0];
+          if (rr < 1.3 && v > S5M_EYE[1]) return S5M_SKIN[Math.min(5, q + 2)];
+        }
+        // warts
+        for (const [ws, wv, wr] of warts) {
+          const dd = Math.sqrt((s - ws) * (s - ws) + (v - wv) * (v - wv));
+          if (dd < wr) return dd < wr * 0.45 && x + y > 0 && s - ws < 0 && v - wv > 0 ? '#ffd8ec' : dd > wr * 0.8 ? '#6a2a78' : '#d890c8';
+        }
+        // mottling
+        if (s5m_hash(x, y) < 0.07 && q > 0) return S5M_SKIN[q - 1];
+        if (lam > 0.93 && s5m_hash(x + 7, y + 3) < 0.35) return '#ffffff';
+        return null;
+      };
+      const { img, buf } = s5m_shade(d, mask, dist, CW, CH, S5M_SKIN, 9, detail);
+      sh.gum.forEach((p, i) => s5m_polyFill(buf, CW, CH, p.map(toPx), s5m_c32(S5M_GUMC[i])));
+      // ridges along the lining
+      const ridge = s5m_c32(S5M_GUMC[3]);
+      for (let s = 4; s < S5M.L - 2; s += 4) {
+        const A = toPx(s5m_pt(s, -S5M.GUM + 0.7, a, [0, 0])), B = toPx(s5m_pt(s, -2.4, a, [0, 0]));
+        s5m_lineFill(buf, CW, CH, A[0], A[1], B[0], B[1], ridge);
+      }
+      const bone = [s5m_c32('#8a7a5a'), s5m_c32('#d8c894'), s5m_c32('#5e5038')];
+      for (const sp of sh.spikes) {
+        s5m_polyFill(buf, CW, CH, sp.all.map(toPx), bone[0]);
+        s5m_polyFill(buf, CW, CH, sp.lit.map(toPx), bone[1]);
+        s5m_polyFill(buf, CW, CH, sp.shade.map(toPx), bone[2]);
+      }
+      const iv = [s5m_c32(S5M_IV.mid), s5m_c32(S5M_IV.lit), s5m_c32(S5M_IV.shade), s5m_c32(S5M_IV.hi)];
+      for (const fg of sh.fangs) {
+        s5m_polyFill(buf, CW, CH, fg.all.map(toPx), iv[0]);
+        s5m_polyFill(buf, CW, CH, fg.lit.map(toPx), iv[1]);
+        s5m_polyFill(buf, CW, CH, fg.shade.map(toPx), iv[2]);
+        const T = toPx(fg.tip), tx = Math.round(T[0]), ty = Math.round(T[1]);
+        if (tx >= 0 && ty >= 0 && tx < CW && ty < CH) buf[ty * CW + tx] = iv[3];
+      }
+      d.g.putImageData(img, 0, 0);
+      d.outline(S5M_OUT);
+    });
+  }
+
+  // solve the opening angles for the wanted gaps between the nose fang tips (idle 64 px, wide 100 px; the lining of the
+  // jaws is ~100 / ~135 px apart there)
+  {
+    const gap = (deg) => {
+      const u = s5m_shapes(s5m_rad(deg), false).fangs, l = s5m_shapes(s5m_rad(deg), true).fangs;
+      return -u[u.length - 1].tip[1] + -l[l.length - 1].tip[1];
+    };
+    const solve = (want) => {
+      let best = 0, bd = 1e9;
+      for (let k = 0; k < S5M.NF; k++) {
+        const dd = Math.abs(gap(k * S5M.STEP) - want);
+        if (dd < bd) { bd = dd; best = k; }
+      }
+      return best * S5M.STEP;
+    };
+    S5M.A_IDLE = solve(64);
+    S5M.A_WIDE = solve(100);
+  }
+
+  /* ---------------- head: cheeks, throat, eye ---------------- */
+  const S5M_CHW = 104, S5M_CHH = 128;
+  // upper cheek: sprite x 0 = head x -8, the bottom row is the lip (drawn at y - lip); the lower cheek is the mirror image
+  function s5m_bakeCheek(name, lower) {
+    const W = S5M_CHW, H = S5M_CHH;
+    const rng = makeRng(lower ? 41 : 31);
+    const boils = Array.from({ length: 14 }, () => [34 + rng() * 66, 10 + rng() * (H - 40), 1.6 + rng() * 2.2]);
+    const lip = ['#7a1c48', '#c8386a', '#c8386a', '#f06a94', '#f06a94', '#ffb0c8', '#c8386a'];
+    Sprites.painted(name, W, H, 1, (d) => {
+      // front face: starts at the lip, bulges slightly, then slopes back toward the cavern wall (a wedge-shaped head)
+      const pts = [[66, 0], [W - 2, 0], [W - 2, H - 1], [12, H - 1], [7, H - 8], [7, H - 24], [12, H - 40], [22, H - 58], [34, H - 78], [46, H - 98], [57, H - 116]];
+      const mask = new Uint8Array(W * H);
+      s5m_polyMask(mask, W, H, pts);
+      if (lower) {
+        for (let y = 0; y < H >> 1; y++) for (let x = 0; x < W; x++) { const a = y * W + x, b = (H - 1 - y) * W + x, t = mask[a]; mask[a] = mask[b]; mask[b] = t; }
+      }
+      const dist = s5m_dist(mask, W, H);
+      const detail = (x, y, q, lam) => {
+        const yu = lower ? H - 1 - y : y;
+        if (yu >= H - 7) return lip[yu - (H - 7)];
+        // overlapping scales: staggered rows of arcs
+        const row = Math.floor(yu / 11), off = row & 1 ? 7 : 0;
+        const cx = Math.floor((x + off) / 14) * 14 + 7 - off, cy = row * 11 + 4;
+        const dd = Math.sqrt((x + 0.5 - cx) * (x + 0.5 - cx) + (yu + 0.5 - cy) * (yu + 0.5 - cy));
+        if (dd > 7.1 && dd < 8.3 && yu + 0.5 > cy - 1) return S5M_SKIN[Math.max(0, q - 2)];
+        if (dd > 5.6 && dd < 7.1 && yu + 0.5 > cy && q >= 2) return S5M_SKIN[Math.min(5, q + 1)];
+        for (const [bx, by, br] of boils) {
+          const d2 = Math.sqrt((x - bx) * (x - bx) + (yu - by) * (yu - by));
+          if (d2 < br) return d2 > br * 0.75 ? '#5a2a78' : d2 < br * 0.4 && x < bx && yu < by ? '#ffe0f0' : '#d890c8';
+        }
+        if (s5m_hash(x, yu) < 0.05 && q > 0) return S5M_SKIN[q - 1];
+        if (lam > 0.93 && s5m_hash(x + 7, yu + 3) < 0.3) return '#ffffff';
+        return null;
+      };
+      d.g.putImageData(s5m_shade(d, mask, dist, W, H, S5M_SKIN, 12, detail).img, 0, 0);
+      d.outline(S5M_OUT);
+    });
+  }
+
+  // the throat: a wet crimson tunnel with muscle ribs, lit from the middle (sprite x 0 = head x -8, y 0 = head y -35)
+  const S5M_TH = 70;
+  const s5m_bakeThroat = () => Sprites.painted('s5_maw_throat', S5M_CHW, S5M_TH, 1, (d) => {
+    const W = S5M_CHW, H = S5M_TH, cy = (H - 1) / 2;
+    const img = d.g.createImageData(W, H), buf = new Uint32Array(img.data.buffer), rc = S5M_RED.map(s5m_c32);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const t = Math.abs(y - cy) / (H / 2);
+        let b = 1 - t * t;
+        b *= 1 - 0.55 * Math.min(1, Math.max(0, x - 6) / 92);
+        if (Math.sin(x / 3.6 + 1.2 * Math.sin(y / 5)) > 0.72) b -= 0.28;
+        buf[y * W + x] = rc[clamp(Math.floor(b * 6 + (BAYER4[(y & 3) * 4 + (x & 3)] - 0.5) * 0.9), 0, 5)];
+      }
+    }
+    d.g.putImageData(img, 0, 0);
+    for (let x = 14; x < W - 8; x += 3) if (s5m_hash(x, 1) < 0.5) { d.px(x, 14 + ((x >> 2) & 1), '#ff9ab8'); d.px(x + 1, H - 15 - ((x >> 2) & 1), '#ff9ab8'); } // wet glints
+    d.outline(S5M_OUT);
+  });
+
+  // slit-pupil eye: sclera only (the iris and pupil are drawn on top at run time), frames: narrow / open / wide
+  Sprites.painted('s5_maw_eye', 18, 11, 3, (d, f) => {
+    const open = [0.4, 0.8, 1][f];
+    for (let y = 0; y < 11; y++) {
+      for (let x = 0; x < 18; x++) {
+        const nx = (x - 8.5) / 8.5, ny = (y - 5) / (5.1 * open);
+        if (Math.abs(ny) <= 1 - Math.pow(Math.abs(nx), 1.7)) d.px(x, y, ny < -0.35 ? '#98b82c' : ny > 0.55 ? '#c8dc4c' : '#eaff74');
+      }
+    }
+    d.outline(S5M_OUT);
+  });
+
+  let s5m_baked = false;
+  /** the big sprites (jaws, cheeks, throat: ~150 ms) are baked when the stage loads (black intro screen), not at page load */
+  function s5m_bakeArt() {
+    if (s5m_baked) return;
+    s5m_baked = true;
+    s5m_bakeJaw('s5_maw_jawU', false);
+    s5m_bakeJaw('s5_maw_jawL', true);
+    s5m_bakeCheek('s5_maw_cheekU', false);
+    s5m_bakeCheek('s5_maw_cheekL', true);
+    s5m_bakeThroat();
+  }
+
+  // the end wall of the cavern as a 32 x 170 strip (entrance bulge): column 0 = outline, 1-2 = the lit rim, then mottled
+  // flesh that darkens towards the screen edge, veins fanning out from where the beast pushes, a few wet glints
+  Sprites.painted('s5_maw_dome', 32, 170, 1, (d) => {
+    const W = 32, H = 170, cy = (H - 1) / 2;
+    const img = d.g.createImageData(W, H), buf = new Uint32Array(img.data.buffer);
+    const rc = ['#3e0a22', '#620f34', '#8c1e46', '#b53a5a', '#dc6480'].map(s5m_c32);
+    for (let y = 0; y < H; y++) {
+      const v = (y - cy) / (H / 2);
+      for (let x = 0; x < W; x++) {
+        let b = 2.9 - x * 0.07 - v * v * 0.7;
+        b += (s5m_hash(x >> 1, y >> 1) - 0.5) * 1.5 + Math.sin(y / 4.3 + Math.sin(x / 5) * 1.5) * 0.4;
+        buf[y * W + x] = rc[clamp(Math.floor(b + (BAYER4[(y & 3) * 4 + (x & 3)] - 0.5) * 0.9), 0, 4)];
+      }
+      buf[y * W] = s5m_c32('#220510');
+      buf[y * W + 1] = s5m_c32('#ff9fb4');
+      buf[y * W + 2] = s5m_c32('#e0708c');
+    }
+    const vein = s5m_c32('#2a0616'), vein2 = s5m_c32('#8c1e46');
+    for (let k = -4; k <= 4; k++) {
+      if (!k) continue;
+      let px = W - 1, py = cy + k * 3;
+      for (let s = 1; s <= 6; s++) {
+        const x = W - 1 - s * 4.6, y = cy + k * 3 + (k * 17) * (s / 6) + (s5m_hash(k + 9, s) - 0.5) * 5;
+        s5m_lineFill(buf, W, H, px, py - 1, x, y - 1, vein2);
+        s5m_lineFill(buf, W, H, px, py, x, y, vein);
+        px = x; py = y;
+      }
+    }
+    for (let i = 0; i < 16; i++) buf[Math.floor(s5m_hash(i, 5) * H) * W + 3 + Math.floor(s5m_hash(i, 6) * 8)] = s5m_c32(i & 1 ? '#ffd0dc' : '#ff9fb4');
+    d.g.putImageData(img, 0, 0);
+  });
+
+  // bile: a heavy lime blob (3 wobble frames) and the flat puddle shots it leaves on the floor
+  Sprites.painted('s5_bile', 11, 11, 3, (d, f) => {
+    const r = [4.5, 4.1, 4.7][f], sq = [0, 0.6, -0.4][f];
+    d.ellipse(5, 5, r + sq * 0.3, r - sq * 0.3, '#2c6a0c');
+    d.ellipse(5, 5, r - 1 + sq * 0.3, r - 1 - sq * 0.3, '#7cc41c');
+    d.ellipse(4.4, 4.4, r - 2.3, r - 2.3, '#c8f040');
+    d.px(3, 3, '#ffffff'); d.px(4, 3, '#f4ffa0'); d.px(3, 4, '#f4ffa0');
+    if (f === 1) { d.px(7, 8, '#7cc41c'); d.px(7, 9, '#2c6a0c'); }
+    d.outline('#142c06');
+  });
+  Sprites.painted('s5_puddle', 9, 5, 2, (d, f) => {
+    d.ellipse(4, 2.6, 3.6 + f * 0.4, 1.7, '#2c6a0c');
+    d.ellipse(4, 2.3, 3 + f * 0.4, 1.2, '#7cc41c');
+    d.px(3, 1, '#d8ff60'); d.px(4, 1, '#f4ffa0');
+    d.outline('#142c06');
+  });
+
+  // death debris: tumbling fangs and chunks of flesh
+  Sprites.painted('s5_tooth', 11, 11, 8, (d, f) => {
+    const a = (f * Math.PI) / 4, c = Math.cos(a), sn = Math.sin(a);
+    const rot = (x, y) => [5 + x * c - y * sn, 5 + x * sn + y * c];
+    d.poly([rot(-4, -2.4), rot(4.5, 0), rot(-4, 2.4)], S5M_IV.mid);
+    d.poly([rot(-4, -2.4), rot(4.5, 0), rot(-4, 0)], S5M_IV.lit);
+    d.poly([rot(-4, 0), rot(4.5, 0), rot(-4, 2.4)], S5M_IV.shade);
+    d.outline(S5M_OUT);
+  });
+  Sprites.painted('s5_chunk', 9, 9, 4, (d, f) => {
+    const r = [3.4, 3, 3.6, 3.1][f];
+    d.ellipse(4, 4, r, r - 0.4, '#4c2a98');
+    d.ellipse(3.6, 3.6, r - 1, r - 1.2, '#a37af0');
+    d.px(2, 2, '#dcc4ff');
+    if (f & 1) d.px(5, 5, '#f06a94');
+    d.outline(S5M_OUT);
+  });
+
+  /** filled pixel ellipse (canvas rects, no antialiasing) */
+  function s5m_ell(c, cx, cy, rx, ry) {
+    cx = Math.round(cx); cy = Math.round(cy);
+    const R = Math.floor(ry);
+    for (let dy = -R; dy <= R; dy++) {
+      const hw = Math.floor(rx * Math.sqrt(Math.max(0, 1 - (dy * dy) / (ry * ry))) + 0.5);
+      c.fillRect(cx - hw, cy + dy, hw * 2 + 1, 1);
+    }
+  }
+  /**
+   * The glowing core (a 14x40 box). hot 0..1 = how exposed / charged it is, green 0..1 = retching bile, flash = hit.
+   * Hidden under the lips whenever the maw is shut (the cheeks are drawn over it).
+   */
+  function s5m_core(c, x, y, o) {
+    const pulse = 0.5 + 0.5 * Math.sin(o.t * (o.over > 0.05 ? 0.45 : 0.22));
+    const g = o.green || 0;
+    const over = o.over > 0.05;
+    const pal = g > 0.3
+      ? ['#142c06', '#4a9a14', '#a8e83c', '#e8ff74', '#ffffff']
+      : over
+        ? ['#5a1010', '#ff5a20', '#ffe080', '#ffffff', '#ffffff']
+        : o.hot > 0.05
+          ? ['#3a0c10', '#b4400e', '#ff8a24', '#ffd040', '#fff6a8']
+          : ['#2a0614', '#5a1230', '#8c2048', '#b8365c', '#e0587a'];
+    if (o.hot > 0.05 || g > 0.3) {
+      const k = Math.max(o.hot, g), bump = over ? 4 : 0;
+      c.globalAlpha = (0.16 + 0.2 * k) * (0.7 + 0.3 * pulse);
+      c.fillStyle = g > 0.3 ? '#b8ff40' : over ? '#ffe8a0' : '#ffb030';
+      s5m_ell(c, x, y, 13 + pulse * 2 + k * 3 + bump, 28 + pulse * 2 + k * 3 + bump);
+      c.globalAlpha = (0.22 + 0.2 * k) * (0.7 + 0.3 * pulse);
+      s5m_ell(c, x, y, 10 + pulse + bump * 0.6, 24 + pulse + bump * 0.6);
+      c.globalAlpha = 1;
+    }
+    const fl = o.flash;
+    c.fillStyle = fl ? '#ffffff' : pal[0]; s5m_ell(c, x, y, 9, 21.5);
+    c.fillStyle = fl ? '#ffffff' : pal[1]; s5m_ell(c, x, y, 8, 20.5);
+    c.fillStyle = fl ? '#ffffff' : pal[2]; s5m_ell(c, x - 0.5, y - 0.5, 6.6, 18.4);
+    c.fillStyle = fl ? '#ffffff' : pal[3]; s5m_ell(c, x - 1, y - 1.5, 4.9, 14.6);
+    c.fillStyle = fl ? '#ffffff' : pal[4]; s5m_ell(c, x - 1, y - 2, 3 + pulse * 0.6, 9 + pulse * 1.4);
+    if (!fl) {
+      c.fillStyle = pal[0];
+      for (const [vx, vy, vw, vh] of [[3, -12, 1, 6], [-4, 4, 1, 7], [2, 10, 1, 5], [-2, -4, 1, 3]]) c.fillRect(Math.round(x) + vx, Math.round(y) + vy, vw, vh); // veins
+      c.fillStyle = '#ffffff';
+      c.fillRect(Math.round(x) - 2, Math.round(y) - 12, 1, 4);
+      c.fillRect(Math.round(x) - 1, Math.round(y) - 13, 1, 1);
+    }
+  }
+
+  // cracks in the head as the maw gets hurt: [level, polyline] in upper-cheek sprite coordinates (mirrored onto the lower cheek)
+  const S5M_SCARS = [
+    [1, [[24, 118], [30, 108], [27, 100], [35, 90], [33, 80]]],
+    [1, [[52, 122], [56, 110], [53, 104], [62, 94]]],
+    [2, [[74, 120], [80, 108], [76, 100], [84, 90], [82, 80]]],
+    [2, [[40, 72], [46, 62], [44, 54]]],
+    [2, [[92, 112], [88, 102], [94, 94]]],
+  ];
+  function s5m_scars(c, x, y, lip, level) {
+    for (const [lv, pts] of S5M_SCARS) {
+      if (lv > level) continue;
+      for (const side of [-1, 1]) {
+        const px = (p) => x - 8 + p[0];
+        const py = (p) => (side < 0 ? y - lip - S5M_CHH + p[1] : y + lip + (S5M_CHH - 1 - p[1]));
+        for (let i = 1; i < pts.length; i++) {
+          c.fillStyle = '#4a0c26';
+          s5_pline(c, px(pts[i - 1]), py(pts[i - 1]), px(pts[i]), py(pts[i]));
+          c.fillStyle = '#ff8ab0';
+          s5_pline(c, px(pts[i - 1]) - 1, py(pts[i - 1]), px(pts[i]) - 1, py(pts[i]));
+        }
+      }
+    }
+  }
+  /**
+   * Draw the whole maw (hinge line at v.x, mouth axis at v.y) in a pose. v: {x, y, ang (deg), core:{hot, green, over, flash, t},
+   * eye:{f, lx, ly, col}, scars (0..2), sag (px the lower jaw hangs), flash}
+   */
+  function s5m_view(c, v) {
+    const x = Math.round(v.x), y = Math.round(v.y);
+    const fr = clamp(Math.round(v.ang / S5M.STEP), 0, S5M.NF - 1);
+    const a = s5m_rad(fr * S5M.STEP), lip = Math.round(s5m_lip(a));
+    const sag = Math.round(v.sag || 0);
+    const JU = S5M_JAW.s5_maw_jawU, JL = S5M_JAW.s5_maw_jawL;
+    const fl = !!v.flash;
+    Sprites.drawTL(c, 's5_maw_throat', x - 8, y - 35, { flash: fl });
+    if (v.core) s5m_core(c, x + 9, y, v.core);
+    Sprites.drawTL(c, 's5_maw_jawL', x - JL.PX, y - JL.PY + sag, { frame: fr, flash: fl });
+    Sprites.drawTL(c, 's5_maw_jawU', x - JU.PX, y - JU.PY, { frame: fr, flash: fl });
+    // the head halves: the cheeks slide apart with the jaws and cover the core when the maw is shut
+    Sprites.drawTL(c, 's5_maw_cheekU', x - 8, y - lip - S5M_CHH, { flash: fl });
+    Sprites.drawTL(c, 's5_maw_cheekL', x - 8, y + lip, { flash: fl });
+    if (v.scars) s5m_scars(c, x, y, lip, v.scars);
+    if (v.eye) {
+      const o = s5m_pt(S5M_EYE[0], S5M_EYE[1], s5m_rad(fr * S5M.STEP), [0, 0]);
+      const ex = x + Math.round(o[0]), ey = y + Math.round(o[1]), E = v.eye;
+      Sprites.draw(c, 's5_maw_eye', ex, ey, { frame: E.f, flash: fl });
+      if (!fl && E.f > 0) {
+        const hx = Math.round(ex + E.lx), hy = Math.round(ey + E.ly);
+        c.fillStyle = E.col || '#ff9424';
+        s5m_ell(c, hx, hy, 3.6, E.f === 2 ? 3.8 : 2.8);
+        c.fillStyle = '#12030c';
+        c.fillRect(hx - 1, hy - (E.f === 2 ? 3 : 2), 2, E.f === 2 ? 7 : 5);
+        c.fillStyle = '#ffffff';
+        c.fillRect(hx - 3, hy - 2, 1, 1);
+      }
+    }
+  }
+
+  /* ---------------------------------------------------------------
+   * hit boxes: 16 vertical strips per jaw that follow the drawn shape, plus stepped boxes for the wedge-shaped cheeks
+   * --------------------------------------------------------------- */
+  const S5M_NS = 16;
+  const S5M_PO = Array.from({ length: 48 }, () => [0, 0]);
+  const S5M_PI = Array.from({ length: 48 }, () => [0, 0]);
+  function s5m_interp(poly, n, x) {
+    if (x <= poly[0][0]) return poly[0][1];
+    for (let i = 1; i < n; i++) {
+      if (x <= poly[i][0]) {
+        const a = poly[i - 1], b = poly[i];
+        return a[1] + ((b[1] - a[1]) * (x - a[0])) / (b[0] - a[0] || 1);
+      }
+    }
+    return poly[n - 1][1];
+  }
+  /**
+   * boxes [cx, cy, w, h] (hinge-relative) of the UPPER jaw at angle a, nose first; the lower jaw is the mirror image.
+   * Every box is inscribed in the drawn jaw (the conservative edge across its width), so nothing hurts where nothing is drawn.
+   */
+  function s5m_strips(a, out) {
+    let n = 0;
+    for (let s = S5M.L; s >= 0; s -= 2) {
+      s5m_pt(s, s5m_T(s), a, S5M_PO[n]);
+      s5m_pt(s, -S5M.GUM - 2.5, a, S5M_PI[n]);
+      n++;
+    }
+    const x0 = Math.max(S5M_PO[0][0], S5M_PI[0][0]), x1 = S5M_PI[n - 1][0]; // boxes start where the skin starts: the bare fang tips do not hurt
+    const bw = (x1 - x0) / S5M_NS;
+    for (let i = 0; i < S5M_NS; i++) {
+      const xa = x0 + i * bw, xb = xa + bw, xc = (xa + xb) / 2;
+      // outer edge (smaller y) -> take the lowest of the three samples, inner edge -> the highest
+      const top = Math.max(s5m_interp(S5M_PO, n, xa), s5m_interp(S5M_PO, n, xc), s5m_interp(S5M_PO, n, xb));
+      const bot = Math.min(s5m_interp(S5M_PI, n, xa), s5m_interp(S5M_PI, n, xc), s5m_interp(S5M_PI, n, xb));
+      const q = out[i];
+      q[0] = xc; q[1] = (top + bot) / 2; q[2] = bw + 0.6; q[3] = Math.max(3, bot - top);
+    }
+  }
+  // The head's front face (the wedge drawn in s5m_bakeCheek): [distance from the lip, x of the face relative to the hinge].
+  // The cheek boxes are steps along it: [y from, y to, x] measured outward from the lip (negative = up); the last step runs up
+  // into the cavern wall.
+  const S5M_FACE = [[0, 4], [7, -1], [23, -1], [39, 4], [57, 14], [77, 26], [97, 38], [115, 49], [160, 69]];
+  const S5M_CHK = (() => {
+    const faceAt = (d) => {
+      for (let i = 1; i < S5M_FACE.length; i++) {
+        if (d <= S5M_FACE[i][0]) {
+          const a = S5M_FACE[i - 1], b = S5M_FACE[i];
+          return a[1] + ((b[1] - a[1]) * (d - a[0])) / (b[0] - a[0]);
+        }
+      }
+      return S5M_FACE[S5M_FACE.length - 1][1];
+    };
+    const edges = [0, 8, 17, 27, 38, 49, 60, 72, 84, 96, 108, 160], out = [];
+    for (let i = 0; i + 1 < edges.length; i++) {
+      let sum = 0, n = 0;
+      for (let d = edges[i]; d <= edges[i + 1]; d += 2) { sum += faceAt(d); n++; }
+      out.push([-edges[i], -edges[i + 1], sum / n + 0.5]); // mean of the face over the step, a hair inside
+    }
+    return out;
+  })();
+
+  /* ---------------------------------------------------------------
+   * fight tuning
+   * --------------------------------------------------------------- */
+  const S5M_BASE_HP = 300; // core hit points at normal difficulty with an unarmed ship
+  const S5M_RANK_K = 0.1; // a better armed ship meets a tougher core: hp *= 1 + K * G.rank
+  // per phase: wind = lunge telegraph, reach = how far the head lunges (px), stuck = frames jammed shut, recover = frames
+  // to withdraw, gap = pause between two attacks, openMin = shortest open window, bites = bites per lunge
+  const S5M_PH = [
+    null,
+    { wind: 68, reach: 62, stuck: 46, recover: 70, gap: 46, openMin: 150, bites: 1, queue: ['spit', 'spit', 'spit'] },
+    { wind: 60, reach: 68, stuck: 42, recover: 64, gap: 40, openMin: 150, bites: 1, queue: ['spit', 'tongue', 'spit', 'spore'] },
+    { wind: 52, reach: 66, reach2: 72, stuck: 40, recover: 60, gap: 34, openMin: 190, bites: 2, queue: ['volley', 'tongue', 'spore', 'volley'] },
+  ];
+  const S5M_STUCK1 = 16; // frames the first jaws of a double bite stay shut before the second wind-up
+  const S5M_ANG_CLOSED = 0;
+  const s5m_ease = (t) => t * t * (3 - 2 * t);
+  const S5M_STRIPS = Array.from({ length: S5M_NS }, () => [0, 0, 0, 0]);
+  const S5M_TMP = [0, 0];
+
+  /** shootable acid blob: lobbed on a gravity arc that passes through (tx, ty) after T frames at base speed */
+  function s5m_lob(e, tx, ty, T, quiet) {
+    const k = G.bulletMul(), g = 0.03;
+    const sx = e.x - 38, sy = e.y - 1;
+    if (!G.canFire({ x: sx, y: sy })) return;
+    const vx = (tx - sx) / T, vy = (ty - sy) / T - 0.5 * g * T;
+    const fb = e.fb;
+    G.ebullet(sx, sy, vx * k, vy * k, { spr: 's5_bile', w: 7, h: 7, hp: 1, solid: false, raw: true, ay: g * k * k, anim: 6, quiet: !!quiet, custom: (b) => s5m_bileTick(b, fb) });
+  }
+  function s5m_bileTick(b, fb) {
+    if (b.t > 8 && b.vy > 0 && b.y >= fb - 5) {
+      b.dead = true;
+      sfx('cellPop');
+      for (const dir of [-1, 1]) G.ebullet(b.x + dir * 3, fb - 3, dir * 0.8, 0, { spr: 's5_puddle', w: 6, h: 4, anim: 10, life: 80, quiet: true });
+      for (let i = 0; i < 6; i++) G.fx.push({ k: 'part', x: b.x, y: fb - 3, vx: rnd(-1, 1), vy: rnd(-1.6, -0.4), life: rndi(14, 26), t: 0, col: pick(['#c8f040', '#7cc41c', '#f4ffa0']), big: chance(0.3) });
+    } else if (b.x < 10) b.dead = true;
+  }
+  /**
+   * Burst of slow shootable spores from the mouth: an arc that stays inside the mouth opening, with a lane of two missing
+   * spores at bearing `gap` (radians from straight left) so there is always a way through.
+   */
+  function s5m_spores(e, n, phase, gap) {
+    const ox = e.x - 38, oy = e.y;
+    if (!G.canFire({ x: ox, y: oy })) return;
+    const span = 1.36; // total arc
+    for (let i = 0; i < n; i++) {
+      const rel = (i / (n - 1) - 0.5) * span + phase;
+      if (Math.abs(rel - gap) < span / (n - 1) * 1.15) continue; // the lane
+      const a = Math.PI + rel;
+      G.ebullet(ox, oy, Math.cos(a) * 0.95, Math.sin(a) * 0.95, { spr: 's5_spore', w: 5, h: 5, hp: 1, quiet: i > 0 });
+    }
+    G.fx.push({
+      k: 'fn', x: 0, y: 0, t: 0, life: 30,
+      draw: (c, f) => {
+        const r = 6 + f.t * 0.9;
+        c.globalAlpha = 0.5 * (1 - f.t / 30);
+        c.fillStyle = '#b8ff40';
+        s5m_ell(c, ox - f.t * 0.6, oy, r * 0.8, r);
+        c.globalAlpha = 1;
+      },
+    });
+  }
+
+  /* ---------------------------------------------------------------
+   * drawing helpers: lunge ghost + danger line, the tongue, the entrance wall, shock rings
+   * --------------------------------------------------------------- */
+  function s5m_ring(c, cx, cy, rx, ry, col) {
+    c.fillStyle = col;
+    const n = Math.max(12, Math.ceil(Math.max(rx, ry) * 2.2));
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * TAU;
+      c.fillRect(Math.round(cx + Math.cos(a) * rx), Math.round(cy + Math.sin(a) * ry), 1, 1);
+    }
+  }
+  const S5M_TONGUE = { out: '#2a0816', dark: '#8c1c48', mid: '#e0487a', lite: '#ff9ab8', spec: '#ffe8f0', sk: '#ffc8dc', skD: '#a8407a' };
+  const S5M_TJ = Array.from({ length: 14 }, () => ({ x: 0, y: 0 }));
+  const S5M_TR = Array.from({ length: 14 }, (_, i) => 5.6 - (i / 13) * 1.6);
+  function s5m_tongue(c, e) {
+    const tg = e.tg;
+    if (!tg || (tg.rip <= 0 && tg.ext <= 0)) return;
+    const fb = e.fb;
+    // telegraph: a glowing band on the floor marks the strike area, flesh ripples run toward the tip point
+    if (tg.rip > 0 && tg.ext < 0.05) {
+      const x0 = Math.round(tg.tipX), x1 = Math.round(e.x - 4), k = tg.rip;
+      const pulse = G.reduceFlash ? 0.5 : 0.5 + 0.5 * Math.sin(e.t * 0.4);
+      c.globalAlpha = 0.14 + 0.2 * k * (0.6 + 0.4 * pulse);
+      c.fillStyle = '#ff3a60';
+      c.fillRect(x0, fb - 12, x1 - x0, 12);
+      c.globalAlpha = 1;
+      const blink = G.reduceFlash || ((e.t >> 2) & 1);
+      for (let x = x0; x < x1; x += 6) {
+        c.fillStyle = blink ? '#ffd430' : '#ff5a4a';
+        c.fillRect(x, fb - 13, 3, 1);
+      }
+      // humps of flesh sliding along the floor
+      for (let x = x0; x < x1; x++) {
+        const ph = ((x - e.t * 1.6) / 17) % 1;
+        const hump = ph < 0 ? ph + 1 : ph;
+        if (hump < 0.5) {
+          const h = Math.round(Math.sin(hump * 2 * Math.PI) * (2 + 4 * k));
+          if (h > 0) {
+            c.fillStyle = '#e0487a'; c.fillRect(x, fb - h, 1, h);
+            c.fillStyle = '#ffb0c8'; c.fillRect(x, fb - h, 1, 1);
+          }
+        }
+      }
+      // the point it will reach
+      c.fillStyle = blink ? '#ff4040' : '#7a1018';
+      c.fillRect(x0 - 3, fb - 14, 4, 14);
+      c.fillStyle = '#ffffff';
+      c.fillRect(x0 - 2, fb - 12, 2, 7);
+      c.fillRect(x0 - 2, fb - 4, 2, 2);
+    }
+    if (tg.ext > 0.02) {
+      const n = 13, x0 = e.x + 4, x1 = lerp(e.x - 10, tg.tipX, s5m_ease(clamp(tg.ext, 0, 1)));
+      for (let i = 0; i <= n; i++) {
+        const u = i / n;
+        S5M_TJ[i].x = lerp(x0, x1, u);
+        S5M_TJ[i].y = fb - 6.5 + Math.sin(e.t * 0.35 - u * 7) * 0.9 * u + (1 - tg.ext) * -3 * u;
+      }
+      s5_tube(c, S5M_TJ, S5M_TR, n, { pal: S5M_TONGUE, flash: null, side: 1, tip: true });
+      const tp = S5M_TJ[n];
+      // clubbed tip
+      c.fillStyle = S5M_TONGUE.out; s5_disc(c, Math.round(tp.x), Math.round(tp.y), 5);
+      c.fillStyle = S5M_TONGUE.mid; s5_disc(c, Math.round(tp.x), Math.round(tp.y), 4);
+      c.fillStyle = S5M_TONGUE.lite; s5_disc(c, Math.round(tp.x) - 1, Math.round(tp.y) - 1, 2);
+      c.fillStyle = '#ffffff'; c.fillRect(Math.round(tp.x) - 2, Math.round(tp.y) - 2, 1, 1);
+    }
+  }
+  /** the cavern's end wall bulging and tearing open (entrance) */
+  function s5m_wall(c, e) {
+    const T = e.stT, ct = e.ct, fb = e.fb, cy = e.cy;
+    if (e.st !== 'enter' || T >= 128) return;
+    const grow = clamp(T / 72, 0, 1), tear = clamp((T - 72) / 26, 0, 1), fade = T > 72 ? 1 - clamp((T - 72) / 54, 0, 1) : 1;
+    const pulse = 1 + 0.07 * Math.sin(T * 0.45);
+    const hwMax = 27 * grow * pulse * fade, tex = Sprites.get('s5_maw_dome');
+    const gapY = tear * 98; // the tear is an ellipse growing out of the middle of the bulge
+    for (let y = ct; y < fb; y++) {
+      const dy = y - cy, u = dy / ((fb - ct) / 2), env = Math.sqrt(Math.max(0, 1 - u * u));
+      const hw = Math.round(hwMax * env);
+      if (hw < 1) continue;
+      c.drawImage(tex, 0, y - ct, hw + 1, 1, W - hw - 1, y, hw + 1, 1);
+      if (gapY > 1 && Math.abs(dy) < gapY) {
+        const k = Math.sqrt(1 - (dy * dy) / (gapY * gapY));
+        const hole = Math.min(hw - 2, Math.round(hw * k + (s5m_hash(y, 3) - 0.5) * 5 * tear * k));
+        if (hole < 1) continue;
+        c.fillStyle = '#12030c';
+        c.fillRect(W - hole, y, hole, 1);
+        c.fillStyle = '#ff6a8c';
+        c.fillRect(W - hole - 1, y, 1, 1);
+        if (hole > 3) { c.fillStyle = '#8c1e46'; c.fillRect(W - hole, y, 1, 1); }
+      }
+    }
+  }
+
+  /* ---------------------------------------------------------------
+   * the boss
+   * --------------------------------------------------------------- */
+  const ENEMY_MAW = (ENEMIES.s5_maw = {
+    w: 110, h: 130, hp: 99999, score: 10000, keep: true, silentDeath: true, expl: 'xl',
+    init(e) {
+      s5m_bakeArt(); // (normally done when the stage loads)
+      const T = G.terrain, cam = G.camX;
+      e.ct = T.ceilBottom(cam + 200);
+      e.fb = T.floorTop(cam + 200);
+      e.cy = (e.ct + e.fb) / 2;
+      e.hp = e.maxHp = 99999;
+      e.x = S5M.START;
+      e.y = e.cy;
+      e.vx = e.vy = 0;
+      e.st = 'enter';
+      e.stT = 0;
+      e.pn = 1; // phase 1..3
+      e.phaseQ = 0;
+      e.cyc = 0;
+      e.ang = 16;
+      e.hx = 0; // head offset from HOME (negative = lunged)
+      e.yT = e.cy;
+      e.yV = 0.5;
+      e.bulge = 0;
+      e.atk = null;
+      e.qi = 0;
+      e.queue = S5M_PH[1].queue.slice();
+      e.pause = 100;
+      e.retch = 0;
+      e.green = 0;
+      e.hot = 0.5;
+      e.tg = { rip: 0, ext: 0, tipX: 40 };
+      e.zoneOn = false;
+      e.bite = 0;
+      e.lx = -2;
+      e.ly = 0;
+      e.eyeF = 1;
+      e.jit = 0;
+      e.phase = 'P1 enter';
+      const k = G.diff.hp * (1 + 0.25 * G.loop) * (1 + S5M_RANK_K * G.rank);
+      const hp = Math.max(1, Math.round(S5M_BASE_HP * k));
+      const box = (name, extra) => Object.assign({ name, ox: 0, oy: 0, w: 4, h: 4, hp: 99999, vuln: false, harmless: true }, extra);
+      e.parts = [];
+      for (let i = 0; i < S5M_NS; i++) e.parts.push(box('u' + i));
+      for (let i = 0; i < S5M_NS; i++) e.parts.push(box('l' + i));
+      for (let i = 0; i < S5M_CHK.length; i++) e.parts.push(box('cu' + i));
+      for (let i = 0; i < S5M_CHK.length; i++) e.parts.push(box('cl' + i));
+      e.parts.push(box('core', { ox: 9, oy: 0, w: 14, h: 40, hp, max: hp, expl: 'xl', score: 5000 }));
+      e.parts.push(box('tongue', { solid: false }));
+      e.iCheek = 2 * S5M_NS;
+      e.core = e.parts[2 * S5M_NS + 2 * S5M_CHK.length];
+      e.iTongue = e.parts.length - 1;
+      this.sync(e);
+    },
+    setHarmless(e, v) {
+      for (const p of e.parts) if (p.name !== 'tongue') p.harmless = v;
+    },
+    go(e, st) {
+      e.st = st;
+      e.stT = 0;
+    },
+    /** move the hit boxes to where the maw is drawn this frame */
+    sync(e) {
+      const a = s5m_rad(e.ang);
+      s5m_strips(a, S5M_STRIPS);
+      for (let i = 0; i < S5M_NS; i++) {
+        const q = S5M_STRIPS[i], u = e.parts[i], l = e.parts[S5M_NS + i];
+        u.ox = q[0]; u.oy = q[1]; u.w = q[2]; u.h = q[3];
+        l.ox = q[0]; l.oy = -q[1]; l.w = q[2]; l.h = q[3];
+      }
+      const core = e.core;
+      core.vuln = e.st !== 'enter' && e.st !== 'roar' && e.st !== 'snap' && !e.phaseQ && e.ang >= 12 && e.pn > 0;
+      const lip = s5m_lip(a), topY = e.ct - e.y - 6, botY = e.fb - e.y + 6;
+      for (let i = 0; i < S5M_CHK.length; i++) {
+        const [y0, y1, xf] = S5M_CHK[i];
+        const last = i === S5M_CHK.length - 1;
+        const u = e.parts[e.iCheek + i], l = e.parts[e.iCheek + S5M_CHK.length + i];
+        // upper half: lip side yb (nearer the axis), outer edge ya, never beyond the cavern ceiling
+        const yb = -lip + y0, ya = Math.max(last ? topY : -lip + y1, topY), h = Math.max(0.5, yb - ya);
+        u.ox = xf + 50; u.w = 100; u.oy = yb - h / 2; u.h = h;
+        // lower half: the mirror image, never beyond the floor
+        const yb2 = lip - y0, ya2 = Math.min(last ? botY : lip - y1, botY), h2 = Math.max(0.5, ya2 - yb2);
+        l.ox = xf + 50; l.w = 100; l.oy = yb2 + h2 / 2; l.h = h2;
+      }
+      const tg = e.tg, tp = e.parts[e.iTongue];
+      const ext = clamp(tg.ext, 0, 1);
+      if (ext > 0.02) {
+        const x1 = lerp(e.x - 10, tg.tipX, s5m_ease(ext)), x0 = e.x + 4;
+        tp.ox = (x0 + x1) / 2 - e.x; tp.w = x0 - x1 + 8; tp.oy = e.fb - 6 - e.y; tp.h = 11;
+        tp.harmless = ext < 0.3 || e.st === 'enter';
+      } else tp.harmless = true;
+    },
+    /** attack scripts of the open window: return true when finished */
+    atkSpit(e, t) {
+      const P = G.player;
+      if (t === 0) sfx('cellPop');
+      e.retch = t < 30 ? (t + 1) / 30 : 0;
+      if (t === 30 && P.alive) {
+        s5m_lob(e, clamp(P.x + rnd(-24, 24), 24, 214), clamp(P.y + rnd(-10, 10), e.ct + 12, e.fb - 16), 100);
+      }
+      return t >= 40;
+    },
+    atkVolley(e, t) {
+      const P = G.player;
+      if (t === 0) sfx('cellPop');
+      e.retch = t < 34 ? (t + 1) / 34 : t < 62 ? 0.5 : 0;
+      for (let i = 0; i < 3; i++) {
+        if (t === 34 + i * 13 && P.alive) {
+          s5m_lob(e, clamp(P.x + (i - 1) * 36 + rnd(-8, 8), 24, 214), clamp(P.y + rnd(-10, 10), e.ct + 12, e.fb - 16), 96 + i * 4, i > 0);
+        }
+      }
+      return t >= 72;
+    },
+    atkTongue(e, t) {
+      const tg = e.tg;
+      if (t === 0) { sfx('tentacle'); tg.tipX = 34; }
+      tg.rip = t < 40 ? 0.25 + 0.75 * (t / 40) : 0;
+      if (t === 40) sfx('ring');
+      tg.ext = t < 40 ? 0 : t < 54 ? (t - 40) / 14 : t < 84 ? 1 : t < 100 ? 1 - (t - 84) / 16 : 0;
+      if (t >= 100) { tg.ext = 0; tg.rip = 0; }
+      return t >= 106;
+    },
+    atkSpore(e, t) {
+      const P = G.player;
+      e.green = t < 36 ? (t + 1) / 36 : 0;
+      if (t === 0) sfx('ring');
+      if (t === 0) e.sporeGap = clamp(-Math.atan2(P.y - e.y, e.x - 38 - P.x) + rnd(-0.34, 0.34), -0.5, 0.5); // the lane: near the ship, but not always right on it
+      if (t === 36 && P.alive) { s5m_spores(e, 13, 0, e.sporeGap); }
+      if (e.pn === 3 && t === 58 && P.alive) { s5m_spores(e, 12, 0.055, e.sporeGap); }
+      return t >= (e.pn === 3 ? 92 : 70);
+    },
+    startWind(e, cfg, second) {
+      e.hx0 = e.hx;
+      e.windN = second ? 30 : cfg.wind;
+      e.reachNow = second ? cfg.reach2 : cfg.reach;
+      e.hxWind = second ? e.hx + 14 : 10;
+      // the zone the jaws will cover: everything right of the closed snout at the end of the lunge
+      const endX = S5M.HOME - e.reachNow;
+      e.zoneX = endX - S5M.L - 5;
+      e.ghostX = endX;
+      e.zoneOn = true;
+      e.bite = second ? 2 : 1;
+      e.angW0 = e.ang;
+      this.go(e, 'wind');
+      if (!second) {
+        sfx('eruption');
+        G.shake = Math.max(G.shake, 4);
+      } else sfx('coreOpen');
+    },
+    update(e) {
+      const P = G.player;
+      if (G.bossPhase === 'dying') return;
+      const cfg = S5M_PH[e.pn];
+      e.stT++;
+      e.vx = e.vy = 0;
+      e.retch = 0;
+      e.green = 0;
+      let tgtY = e.cy + Math.sin(e.t * 0.013) * 22 + (P.alive ? clamp(P.y - e.cy, -30, 30) * 0.3 : 0);
+      let angT = S5M.A_IDLE + Math.sin(e.t * 0.05) * 2;
+      let eyeF = 1;
+      let hot = 1;
+      let yV = 0.5;
+
+      switch (e.st) {
+        case 'enter': {
+          const T = e.stT;
+          eyeF = 0;
+          tgtY = e.cy;
+          e.zoneOn = false;
+          if (T < 72) {
+            e.x = S5M.START;
+            e.bulge = T / 72;
+            if (T % 24 === 8) { sfx('stomp'); G.shake = Math.max(G.shake, 1.5 + 2 * e.bulge); }
+            e.hot = 0.3;
+          } else if (T === 72) {
+            e.x = S5M.START;
+            sfx('eruption');
+            G.shake = 7;
+            G.flash = Math.max(G.flash, 2);
+            G.showBanner(['MAW LEVIATHAN'], 84);
+            for (let i = 0; i < 34; i++) {
+              const sy = e.cy + rnd(-70, 70);
+              G.fx.push({ k: 'part', x: W - 6, y: sy, vx: rnd(-2.6, -0.4), vy: rnd(-1, 1), life: rndi(24, 50), t: 0, col: pick(['#ff9fb4', '#b53a5a', '#8c1e46', '#ffd8e4', '#ff6a8c']), big: chance(0.35) });
+            }
+          } else if (T < 72 + 100) {
+            const u = (T - 72) / 100;
+            e.x = S5M.HOME + (S5M.START - S5M.HOME) * Math.pow(1 - u, 2.4);
+            e.ang = lerp(14, S5M.A_IDLE, s5m_ease(clamp(u * 1.2, 0, 1)));
+            angT = e.ang;
+            e.hot = u;
+            // the arriving maw pushes the ship ahead of it instead of crushing it
+            if (P.alive && P.x > e.x - 96 - 12) P.x = Math.max(14, e.x - 96 - 12);
+            if (T === 72 + 40) sfx('coreOpen');
+          } else {
+            e.x = S5M.HOME;
+            e.hot = 1;
+            this.setHarmless(e, false);
+            this.go(e, 'open');
+          }
+          break;
+        }
+        case 'open': {
+          hot = 1;
+          if ((e.t + 37) % 230 < 6) eyeF = 0; // a blink
+          if (e.atk) {
+            const n = e.atk.n;
+            const done = n === 'spit' ? this.atkSpit(e, e.atk.t) : n === 'volley' ? this.atkVolley(e, e.atk.t) : n === 'tongue' ? this.atkTongue(e, e.atk.t) : this.atkSpore(e, e.atk.t);
+            e.atk.t++;
+            if (done) { e.atk = null; e.pause = G.fireDelay(cfg.gap) + (n === 'spore' ? 40 : 0); } // (after a spore ring: more room before the lunge)
+          } else if (P.alive) {
+            if (e.pause > 0) e.pause--;
+            else if (e.qi < e.queue.length) e.atk = { n: e.queue[e.qi++], t: 0 };
+            else if (e.stT >= cfg.openMin) { this.startWind(e, cfg, false); break; }
+          }
+          if (e.retch > 0 || e.green > 0) angT += 3 * Math.max(e.retch, e.green);
+          if (e.phaseQ && !(e.atk && e.atk.n === 'tongue' && e.tg.ext > 0.05)) { this.go(e, 'roar'); e.atk = null; e.tg.ext = 0; e.tg.rip = 0; }
+          break;
+        }
+        case 'wind': {
+          const T = e.stT, N = e.windN;
+          eyeF = 2;
+          hot = 1;
+          yV = 0.8;
+          tgtY = clamp(P.y, e.cy - 26, e.cy + 26);
+          e.hx = lerp(e.hx0, e.hxWind, s5m_ease(clamp(T / (N * 0.8), 0, 1)));
+          angT = lerp(e.angW0, S5M.A_WIDE, s5m_ease(clamp(T / (N * 0.7), 0, 1)));
+          e.ang = angT;
+          if (T < 10 && T % 2 === 0) G.shake = Math.max(G.shake, 3 - T * 0.2); // a jolt as it rears back, then a low rumble
+          else if (T % 4 === 0) G.shake = Math.max(G.shake, 0.7);
+          e.zoneK = clamp(T / 14, 0, 1);
+          if (T >= N) { e.hx1 = e.hx; this.go(e, 'lunge'); }
+          break;
+        }
+        case 'lunge': {
+          const T = e.stT, N = 12, u = clamp(T / N, 0, 1);
+          eyeF = 2;
+          hot = 1;
+          yV = 0.2;
+          tgtY = e.y;
+          if (T === 1) { sfx('ring'); G.shake = Math.max(G.shake, 3); }
+          e.hx = lerp(e.hx1, -e.reachNow, u * u);
+          const k = clamp((u - 0.25) / 0.75, 0, 1);
+          e.ang = lerp(S5M.A_WIDE, S5M_ANG_CLOSED, k * k * (3 - 2 * k));
+          angT = e.ang;
+          if (T >= N) {
+            e.hx = -e.reachNow;
+            e.ang = S5M_ANG_CLOSED;
+            sfx('stomp');
+            sfx('coreClose');
+            G.shake = Math.max(G.shake, 7);
+            // teeth clack: ivory chips fly off the snout
+            for (let i = 0; i < 12; i++) G.fx.push({ k: 'part', x: e.x - 84 + rnd(-3, 3), y: e.y + rnd(-9, 9), vx: rnd(-1.8, 0.4), vy: rnd(-1.2, 1.2), life: rndi(14, 28), t: 0, col: pick(['#f6edc8', '#d8c894', '#ffffff']), big: chance(0.3) });
+            this.go(e, 'snap');
+          }
+          break;
+        }
+        case 'snap': {
+          const T = e.stT;
+          eyeF = 0;
+          hot = 0;
+          yV = 0.1;
+          tgtY = e.y;
+          const stuck = e.bite < cfg.bites ? S5M_STUCK1 : cfg.stuck;
+          e.hx = -e.reachNow + (T < 30 ? 6 * (T / 6) * Math.exp(1 - T / 6) : 0); // the head rebounds a little from the slam
+          e.ang = S5M_ANG_CLOSED;
+          angT = 0;
+          e.jit = T < 24 ? ((T & 1) ? 1 : -1) : 0;
+          if (T >= stuck) {
+            if (e.bite < cfg.bites) { this.startWind(e, cfg, true); } else {
+              e.hx2 = e.hx;
+              this.go(e, 'recover');
+            }
+          }
+          break;
+        }
+        case 'recover': {
+          const T = e.stT, N = cfg.recover, u = clamp(T / N, 0, 1);
+          eyeF = 1;
+          hot = clamp((T - 16) / 30, 0, 1);
+          e.zoneOn = false;
+          e.jit = 0;
+          e.hx = lerp(e.hx2, 0, s5m_ease(u));
+          e.ang = T < 14 ? 0 : lerp(0, S5M.A_IDLE, s5m_ease(clamp((T - 14) / (N - 14), 0, 1)));
+          angT = e.ang;
+          if (T >= N) {
+            e.cyc++;
+            if (e.phaseQ) this.go(e, 'roar');
+            else {
+              this.go(e, 'open');
+              const q = S5M_PH[e.pn].queue;
+              e.queue = q.map((_, i) => q[(i + e.cyc) % q.length]);
+              e.qi = 0;
+              e.pause = 50;
+              e.atk = null;
+            }
+          }
+          break;
+        }
+        case 'roar': {
+          const T = e.stT;
+          eyeF = 2;
+          hot = 0;
+          yV = 0.4;
+          tgtY = e.cy;
+          e.zoneOn = false;
+          e.jit = 0;
+          if (T === 1) {
+            for (const b of G.eb) b.dead = true; // a fresh start: no bile or spores survive the roar
+            e.pn = e.phaseQ;
+            e.phaseQ = 0;
+            e.cyc = 0;
+            sfx('eruption');
+            G.shake = 8;
+            G.flash = Math.max(G.flash, 3);
+            for (let i = 0; i < 26; i++) {
+              const a = rnd(TAU), s = rnd(0.6, 2.6);
+              G.fx.push({ k: 'part', x: e.x - 20, y: e.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: rndi(20, 44), t: 0, col: pick(['#ff9fb4', '#ffd8e4', '#c8386a', '#ffffff', '#ffe646']), big: chance(0.35) });
+            }
+          }
+          if (T % 12 === 0 && T < 64) { sfx('stomp'); }
+          if (T > 1 && T < 64) G.shake = Math.max(G.shake, 2.2);
+          e.hx = lerp(e.hx, T < 66 ? 16 : 0, 0.08);
+          angT = T < 66 ? S5M.A_WIDE + 4 : S5M.A_IDLE;
+          e.ang += (angT - e.ang) * 0.12;
+          if (T >= 84) {
+            this.go(e, 'open');
+            e.queue = S5M_PH[e.pn].queue.slice();
+            e.qi = 0;
+            e.pause = 60;
+            e.atk = null;
+          }
+          break;
+        }
+        default: break;
+      }
+      // open / enter-state smoothing
+      if (e.st === 'open') {
+        e.ang += (angT - e.ang) * 0.1;
+        e.hx += (0 - e.hx) * 0.2; // drifts back to the rest position
+      }
+      if (e.st !== 'enter') e.x = S5M.HOME + e.hx + (e.jit || 0);
+      // head height
+      e.y += clamp(tgtY - e.y, -yV, yV);
+      e.y = clamp(e.y, e.cy - 28, e.cy + 28);
+      // look at the ship
+      const ex = e.x, ey = e.y - 40;
+      const dx = P.x - ex, dy = P.y - ey, dl = Math.hypot(dx, dy) || 1;
+      e.lx += ((dx / dl) * 2.2 - e.lx) * 0.12;
+      e.ly += ((dy / dl) * 1.6 - e.ly) * 0.12;
+      e.eyeF = eyeF;
+      e.hot += (hot - e.hot) * 0.2;
+      // drool drips from the upper fangs
+      if ((e.t & 15) === 0 && e.x < W + 20 && (e.st === 'open' || e.st === 'wind' || e.st === 'roar') && chance(0.75)) {
+        s5m_pt(rnd(24, 82), -S5M.GUM - 7, s5m_rad(e.ang), S5M_TMP);
+        G.fx.push({ k: 'part', x: e.x + S5M_TMP[0], y: e.y + S5M_TMP[1], vx: rnd(-0.05, 0.05), vy: rnd(0.1, 0.4), life: rndi(18, 34), t: 0, col: pick(['#e8f8ff', '#c8e8f0', '#ffffff']), big: false });
+      }
+      this.sync(e);
+      e.phase = 'P' + e.pn + ' ' + e.st + (e.atk ? ':' + e.atk.n : '');
+    },
+    onPartHurt(e, p) {
+      if (p.name !== 'core') return;
+      const thr = e.pn === 1 ? 0.65 : e.pn === 2 ? 0.3 : -1;
+      if (thr >= 0 && !e.phaseQ && p.hp <= p.max * thr) {
+        p.hp = p.max * thr; // the core cannot be brought lower until the maw has roared and changed its ways
+        p.vuln = false;
+        e.phaseQ = e.pn + 1;
+      }
+    },
+    onPartDeath(e, p) {
+      if (p.name === 'core') G.kill(e);
+    },
+    gauge(e) {
+      const c = e.core;
+      return c.dead ? 0 : Math.max(0, c.hp) / c.max;
+    },
+    onDeath(e) {
+      const snap = { x: e.x, y: e.y, ang: e.ang, ct: e.ct, fb: e.fb, pn: e.pn };
+      G.fx.push({ k: 'fn', x: e.x, y: e.y, t: 0, life: 136, draw: (c, f) => ENEMY_MAW.drawWreck(snap, c, f) });
+      // teeth and flesh burst away from the jaws
+      const hx = e.x, hy = e.y;
+      for (let i = 0; i < 40; i++) {
+        G.later(i * 3, () => {
+          const s = rnd(0, 80), up = chance(0.5) ? -1 : 1;
+          G.fx.push({ k: 'part', x: hx - 8 - s * 0.8, y: hy + up * (22 + s * 0.45), vx: rnd(-1.8, 0.6), vy: up * rnd(0.2, 1.8) - 0.3, life: rndi(30, 62), t: 0, col: pick(['#f6edc8', '#d8c894', '#ffffff', '#a37af0', '#7448c4', '#f06a94']), big: chance(0.45) });
+        });
+      }
+      // chunks of fang and flesh tumble away from the jaws
+      for (let i = 0; i < 26; i++) {
+        const up = i % 2 ? -1 : 1, s0 = rnd(6, 84);
+        const x0 = hx - 6 - s0 * 0.85, y0 = hy + up * (24 + s0 * 0.42), vx = rnd(-1.5, 0.5), vy = up * rnd(0.2, 1.4) - rnd(0.2, 1.2), life = rndi(46, 90), spin = rndi(2, 4), tooth = i % 3 !== 0;
+        G.later(rndi(0, 40), () => {
+          G.fx.push({
+            k: 'fn', x: 0, y: 0, t: 0, life,
+            draw: (c, f) => {
+              const t = f.t;
+              Sprites.draw(c, tooth ? 's5_tooth' : 's5_chunk', x0 + vx * t, y0 + vy * t + 0.035 * t * t, { frame: (t / spin) | 0, alpha: t > life - 10 ? (life - t) / 10 : 1 });
+            },
+          });
+        });
+      }
+      e.x -= 40; // the explosion chain of bossDefeated is centred on the maw, not on the hinge
+      G.bossDefeated(e);
+    },
+    drawWreck(s, c, f) {
+      const jx = rndi(-1, 1), jy = rndi(-1, 1);
+      const u = clamp(f.t / 46, 0, 1);
+      c.save();
+      c.beginPath();
+      c.rect(0, s.ct, W, s.fb - s.ct);
+      c.clip();
+      const flash = !G.reduceFlash && (f.t >> 2) % 5 === 0;
+      s5m_view(c, {
+        x: f.x + jx + f.t * 0.18, y: f.y + jy, ang: lerp(s.ang, 50, s5m_ease(u)), sag: 10 * s5m_ease(u),
+        core: f.t < 14 ? { hot: 1, t: f.t, flash: (f.t >> 1) & 1 } : null,
+        eye: { f: 0, lx: 0, ly: 0 }, flash,
+      });
+      c.restore();
+    },
+    draw(e, c) {
+      c.save();
+      c.beginPath();
+      c.rect(0, e.ct, W, e.fb - e.ct);
+      c.clip();
+      s5m_wall(c, e);
+      s5m_tongue(c, e);
+      // lunge preview: a ghost of the closed maw where the jaws will slam shut + the line it will reach
+      if (e.zoneOn && (e.st === 'wind' || e.st === 'lunge' || (e.st === 'snap' && e.bite < S5M_PH[e.pn].bites))) {
+        const k = e.st === 'wind' ? e.zoneK || 0 : 1;
+        const pulse = G.reduceFlash ? 0.5 : 0.5 + 0.5 * Math.sin(e.t * 0.5);
+        c.globalAlpha = (0.16 + 0.14 * pulse) * k;
+        s5m_view(c, { x: e.ghostX, y: e.y, ang: 0, core: null });
+        c.globalAlpha = 0.1 * k;
+        c.fillStyle = '#ff2030';
+        c.fillRect(Math.round(e.zoneX), e.ct, W, e.fb - e.ct);
+        c.globalAlpha = 1;
+        const blink = G.reduceFlash || ((e.t >> 2) & 1);
+        const zx = Math.round(e.zoneX);
+        for (let y = e.ct + 1; y < e.fb - 2; y += 6) {
+          c.fillStyle = blink ? '#ffd430' : '#ff3a2a';
+          c.fillRect(zx, y, 2, 3);
+        }
+        for (const y of [e.ct + 2, e.fb - 6]) {
+          c.fillStyle = blink ? '#ff4040' : '#7a1018';
+          c.fillRect(zx - 3, y, 8, 4);
+        }
+      }
+      const fl = e.core.flash > 0;
+      s5m_view(c, {
+        x: e.x, y: e.y, ang: e.ang, sag: e.sag || 0,
+        core: { hot: e.st === 'roar' || e.phaseQ ? 0 : e.core.vuln ? e.hot : e.hot * 0.4, green: Math.max(e.retch, e.green), over: e.st === 'wind' || e.st === 'lunge' ? 1 : 0, flash: fl, t: e.t },
+        scars: e.pn - 1,
+        eye: { f: e.eyeF, lx: e.lx, ly: e.ly, col: e.pn === 1 ? '#ffb030' : e.pn === 2 ? '#ff6a20' : '#ff2a2a' },
+      });
+      // acid forming in the mouth
+      if (e.retch > 0 && e.st === 'open') {
+        const r = 1.5 + 4.2 * e.retch, mx = Math.round(e.x - 38), my = Math.round(e.y - 1);
+        c.fillStyle = '#142c06'; s5_disc(c, mx, my, r + 1);
+        c.fillStyle = '#7cc41c'; s5_disc(c, mx, my, r);
+        c.fillStyle = '#c8f040'; s5_disc(c, mx - 1, my - 1, Math.max(0.5, r - 1.8));
+      }
+      // roar: shock rings
+      if (e.st === 'roar' && e.stT > 1 && e.stT < 76) {
+        for (let k = 0; k < 3; k++) {
+          const r = ((e.stT * 2.4 + k * 26) % 78) + 6;
+          c.globalAlpha = 0.85 * (1 - r / 86);
+          s5m_ring(c, e.x - 24, e.y, r * 0.8, r, '#ffe8f0');
+          s5m_ring(c, e.x - 24, e.y, r * 0.8 + 1, r + 1, '#ff6a8c');
+          s5m_ring(c, e.x - 24, e.y, r * 0.8 - 1, r - 1, '#ff6a8c');
+        }
+        c.globalAlpha = 1;
+      }
+      c.restore();
+    },
+  });
+
   /* ------------------------------------------------------------
    * invisible controller: makes the wet wall rims flash with the heartbeat
    * and twinkle (spawned from the stage's onReset hook; ghost + harmless)
@@ -1773,6 +3026,9 @@
     bossX: BOSS_X,
     scrollMap: [[1840, 0.55], [2600, 0.6]],
     checkpoints: [0, 820, 1620, 2600, 3240],
+    onLoad() {
+      s5m_bakeArt(); // the boss's big sprites are baked here, on the black intro screen, instead of at page load
+    },
     onReset(g) {
       g.spawn('s5_pulse', { x: -60, y: -60 });
       g.enemies.unshift(g.enemies.pop()); // drawn first: the rim glow and cilia stay behind every enemy
@@ -1922,7 +3178,7 @@
       S.wave(3428, 's5_leech', { n: 3, gap: 16, y: 88, dy: 8, amp: 12, carry: 'all' });
       S.wave(3468, 's5_leech', { n: 4, gap: 14, y: 116, amp: 20, carry: 'last' });
 
-      S.boss(BOSS_X, 'bigcore', { level: 5 });
+      S.boss(BOSS_X, 's5_maw', {});
     },
   });
 })();

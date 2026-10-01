@@ -5,8 +5,8 @@
  * The volcano stage turned upside down: huge crater mountains hang from
  * the ceiling and rain rocks onto forested, burning hills; lava streams,
  * lava lakes and geysers below; an armoured "Iron Maiden" crawls the
- * ceiling of an iron hall (mid-boss); the Guardian Core (violet) waits in
- * a calm lava arena.
+ * ceiling of an iron hall (mid-boss); the ASH PHOENIX (a fast fire-bird that
+ * dive-bombs across the arena, wings = armour) waits above a calm lava arena.
  *
  *   0    A  ember gate      lush pines, first hanging tips, volcano #1
  *   650  B  burning forest  tall hills, burning trees, valley geysers
@@ -14,7 +14,7 @@
  *   2000 D  lava lake       geysers, lava bubbles, aimed rocks
  *   2420 H  iron hall       IRON MAIDEN (3 armour plates + core), scroll 0.62
  *   3480 E  final approach  lava lake, last vent, capsules, calm run-in
- *   4000    boss arena      flat, 164 px corridor, lava floor
+ *   4000    boss arena      flat, 164 px corridor, lava floor: ASH PHOENIX
  *
  * Checkpoints 0 / 820 / 1540 / 2300 / 3520 sit in open air; shooters and
  * squads keep out of the ~5 s that follow each one.
@@ -23,8 +23,9 @@
  * rocks that splash into embers), s4_geyser (telegraphed lava column, an
  * invulnerable moving obstacle), s4_wisp (ghost fire on sine paths),
  * s4_crawler (ceiling walker), s4_stal (stalactite trap), s4_bubble (lava
- * bubble), s4_maiden + s4_bomb (mid-boss), s4_burn / s4_lavafx (living
- * decoration). Generic turret / rocket / diver / spinner are reused.
+ * bubble), s4_maiden + s4_bomb (mid-boss), s4_phoenix (boss), s4_burn /
+ * s4_lavafx (living decoration). Generic turret / rocket / diver / spinner
+ * are reused.
  *
  * Everything lives inside one IIFE; only STAGES, ENEMIES, Sprites and
  * Terrain.TILES receive (s4_-prefixed) entries.
@@ -468,6 +469,198 @@
     d.circle(2.5, 2.5, 1.1, f ? 'y' : 'h');
     d.outline('#3a0808');
   });
+
+  /* ---- ASH PHOENIX (boss): art ----
+   * The bird faces left. The body sprite (78x64) has its chest centre at (S4_PH_BX, S4_PH_BY); the two wings are fans of
+   * feathers baked at 11 poses (0 = folded in front of the chest like a shield, 1 = spread, 2 = swept back for the dive).
+   * The wing geometry below also gives the hit boxes of the wing parts, so boxes and pixels always agree. */
+  const S4_PH_BX = 30, S4_PH_BY = 36; // body sprite: chest centre
+  const S4_PH_HX = 16, S4_PH_HY = 23; // head sprite: head centre (it sits at chest + [-18, -10 + tilt])
+  const S4_PH_OUT = '#22081a';
+  const S4_PH_RAMP = ['#5a1a3c', '#a81c34', '#e8402c', '#ff8228', '#ffc040', '#fff2b0']; // feather: root -> glowing tip
+  const S4_PH_RAMP2 = ['#3c1030', '#7a1830', '#c02c2c', '#f06a24', '#ffa838', '#ffe27c']; // darker neighbour feather
+  const S4_PH_WK = [[160, 24, 0.9], [268, 40, 0.94], [0, 7, 0.86]]; // per key pose: [centre angle (deg), half fan (deg), length scale]
+  const S4_PH_WL = [33, 38, 42, 41, 37, 31, 25]; // feather lengths, leading edge -> trailing edge
+  const S4_PH_WW = 84, S4_PH_WH = 66, S4_PH_WSX = 44, S4_PH_WSY = 52; // wing canvas and the shoulder position inside it
+  const S4_PH_SH = [2, -13]; // upper shoulder relative to the chest centre; the lower wing mirrors it to [2, +14]
+
+  /** feather fan of one wing at pose p (0..2): [{th (rad), L}] */
+  function s4_wingFeathers(p) {
+    const i = p >= 1 ? 1 : 0, f = p - i, a = S4_PH_WK[i], b = S4_PH_WK[i + 1];
+    const ac = a[0] + (b[0] - a[0]) * f, half = a[1] + (b[1] - a[1]) * f, k = a[2] + (b[2] - a[2]) * f;
+    return S4_PH_WL.map((L, n) => ({ th: ((ac + ((n - 3) / 3) * half) * Math.PI) / 180, L: L * k }));
+  }
+  /** tight bounding box [x0, y0, x1, y1] of the upper wing relative to its shoulder */
+  function s4_wingBox(p) {
+    let x0 = 99, y0 = 99, x1 = -99, y1 = -99;
+    for (const F of s4_wingFeathers(p)) {
+      for (const t of [0.25, 0.9]) {
+        const x = Math.cos(F.th) * F.L * t, y = Math.sin(F.th) * F.L * t;
+        x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+      }
+    }
+    return [x0 - 2.5, y0 - 2.5, x1 + 2.5, y1 + 2.5];
+  }
+  /** one tapering feather from (sx, sy) along angle th, painted in colour bands root -> tip */
+  function s4_feather(d, sx, sy, th, L, w0, w1, ramp) {
+    const ca = Math.cos(th), sa = Math.sin(th), nx = -sa, ny = ca, n = ramp.length;
+    for (let k = 0; k < n; k++) {
+      const t0 = k / n, t1 = Math.min(1, (k + 1) / n + (k < n - 1 ? 0.07 : 0));
+      const a0 = w0 + (w1 - w0) * t0, a1 = w0 + (w1 - w0) * t1;
+      const x0 = sx + ca * L * t0, y0 = sy + sa * L * t0, x1 = sx + ca * L * t1, y1 = sy + sa * L * t1;
+      d.poly([[x0 + nx * a0, y0 + ny * a0], [x1 + nx * a1, y1 + ny * a1], [x1 - nx * a1, y1 - ny * a1], [x0 - nx * a0, y0 - ny * a0]], ramp[k]);
+    }
+  }
+
+  Sprites.painted('s4_ph_wing', S4_PH_WW, S4_PH_WH, 11, (d, f) => {
+    const fe = s4_wingFeathers(f / 5);
+    d.circle(S4_PH_WSX + 1, S4_PH_WSY, 3.4, '#3c1030'); // root, mostly hidden under the feathers
+    for (let n = fe.length - 1; n >= 0; n--) {
+      const F = fe[n];
+      s4_feather(d, S4_PH_WSX, S4_PH_WSY, F.th, F.L, 4.6 - n * 0.12, 1.2, n % 2 ? S4_PH_RAMP2 : S4_PH_RAMP);
+    }
+    d.outline(S4_PH_OUT);
+  });
+
+  /** a tapering blob: discs along a line, radius r0 -> r1 (torso, neck) */
+  const s4_capsule = (d, x0, y0, r0, x1, y1, r1, col) => {
+    const n = Math.max(2, Math.ceil(Math.hypot(x1 - x0, y1 - y0)));
+    for (let i = 0; i <= n; i++) d.circle(x0 + ((x1 - x0) * i) / n, y0 + ((y1 - y0) * i) / n, r0 + ((r1 - r0) * i) / n, col);
+  };
+
+  // the torso never changes between the body frames: paint it once and stamp it into every frame
+  const s4_phTorso = (() => {
+    const d = new Sprites.Painter(78, 64, {});
+    const cx = S4_PH_BX, cy = S4_PH_BY;
+    // a teardrop (round chest, tapering rump), crimson plumage lit from the top left, fiery breast
+    s4_capsule(d, cx - 3, cy + 2, 11.6, cx + 11, cy + 7, 5.6, '#5a1430');
+    s4_capsule(d, cx - 3.6, cy + 1.4, 10.6, cx + 10, cy + 6.4, 4.6, '#a81c34');
+    s4_capsule(d, cx - 4.4, cy + 0.6, 9, cx + 8, cy + 5.4, 3.2, '#d83a2c');
+    s4_capsule(d, cx - 5.2, cy - 0.4, 6.4, cx + 3, cy + 2.6, 2, '#ee6a2c');
+    d.ellipse(cx - 5, cy + 3.4, 6.4, 7.6, '#ff9a2c'); // fiery breast
+    d.ellipse(cx - 5.4, cy + 3.4, 5, 6.2, '#ffc84a');
+    // layered back feathers (scallops)
+    for (let r = 0; r < 4; r++) {
+      for (let k = 0; k < 4; k++) {
+        const sx = Math.round(cx + 3 + k * 3 + (r & 1) * 1.5), sy = Math.round(cy - 5 + r * 4);
+        d.px(sx, sy, '#7a1430'); d.px(sx + 1, sy + 1, '#7a1430'); d.px(sx + 2, sy, '#7a1430');
+      }
+    }
+    // socket of the heart gem (the gem itself is drawn on top, see ENEMIES.s4_phoenix)
+    d.circle(cx - 5, cy + 3, 5.6, '#3a0c1c');
+    return d.c;
+  })();
+
+  Sprites.painted('s4_ph_body', 78, 64, 12, (d, f) => {
+    const tilt = Math.floor(f / 4) - 1; // -1 climbing, 0 level, +1 diving (head down, tail up)
+    const tf = f % 4; // tail wave
+    const cx = S4_PH_BX, cy = S4_PH_BY;
+    // tail: five flame feathers streaming back, they wave and lift when diving
+    [[6, 46, 3.2], [16, 42, 3.0], [27, 37, 2.8], [38, 31, 2.5], [50, 25, 2.2]].forEach(([deg, L, w0], i) => {
+      const th = ((deg - tilt * 18) * Math.PI) / 180 + Math.sin((tf / 4) * TAU + i * 0.9) * 0.07;
+      s4_feather(d, cx + 9, cy + 7, th, L, w0, 0.9, i % 2 ? S4_PH_RAMP2 : S4_PH_RAMP);
+    });
+    // talons tucked under the belly
+    for (const [x0, x1] of [[-4, -8], [4, 2]]) {
+      d.line(cx + x0, cy + 11, cx + x1, cy + 18, '#d88420');
+      d.line(cx + x1, cy + 18, cx + x1 - 3, cy + 20, '#ffc83c');
+      d.line(cx + x1, cy + 18, cx + x1 + 2, cy + 20, '#ffc83c');
+    }
+    // neck (the head is a layer of its own), then the torso over it
+    s4_capsule(d, cx - 12, cy - 6 + Math.round(tilt * 2.5), 4.6, cx - 5, cy - 3, 6.4, '#a81c34');
+    d.g.drawImage(s4_phTorso, 0, 0);
+    d.outline(S4_PH_OUT);
+  });
+
+  // head and crest are a layer of their own: they are drawn over the wings in every pose
+  Sprites.painted('s4_ph_head', 40, 32, 2, (d, f) => {
+    const hx = S4_PH_HX, hy = S4_PH_HY;
+    [[-62, 18, 2.4], [-46, 22, 2.6], [-30, 20, 2.4], [-14, 15, 2.1]].forEach(([deg, L, w0], i) => {
+      s4_feather(d, hx + 2 + i * 1.6, hy - 3, ((deg + (f ? 5 : -4) * (i % 2 ? 1 : -1)) * Math.PI) / 180, L, w0, 0.8, i % 2 ? S4_PH_RAMP2 : S4_PH_RAMP);
+    });
+    d.ellipse(hx, hy, 5.6, 5, '#a81c34');
+    d.ellipse(hx - 0.6, hy - 0.8, 4.6, 4, '#e8402c');
+    d.poly([[hx - 3.5, hy - 2.6], [hx - 13, hy + 0.4], [hx - 11.4, hy + 3.2], [hx - 3.5, hy + 2.2]], '#ffc83c'); // upper beak
+    d.px(hx - 13, hy + 1, '#ffc83c'); d.px(hx - 13, hy + 2, '#d88420'); d.px(hx - 12, hy + 3, '#d88420'); // hook
+    d.poly([[hx - 3.5, hy + 3.2], [hx - 9.4, hy + 5.6], [hx - 3.5, hy + 5.2]], '#d88420'); // lower beak
+    d.hline(hx - 10, hx - 4, hy + 3, '#7a1430'); // gape
+    d.line(hx - 3, hy - 1, hx, hy - 2, '#fff2b0'); // eye
+    d.px(hx - 2, hy - 1, '#ff2a2a');
+    d.line(hx - 5, hy - 1, hx + 1, hy - 4, S4_PH_OUT); // heavy brow
+    d.outline(S4_PH_OUT);
+  });
+
+  // the heart gem: 0/1 dim and shielded, 2/3 white-hot and exposed
+  Sprites.painted('s4_ph_gem', 13, 13, 4, (d, f) => {
+    if (f < 2) {
+      d.circle(6, 6, 5.4, '#3a0c1c');
+      d.circle(6, 6, 4.4, '#7a1430');
+      d.circle(6, 6, 3, f ? '#c02c2c' : '#a81c34');
+      d.px(6, 6, f ? '#ff7a24' : '#e8402c');
+    } else {
+      d.circle(6, 6, 6, '#ff8228');
+      d.circle(6, 6, 5, '#ffc040');
+      d.circle(6, 6, 3.6, '#fff2b0');
+      d.circle(6, 6, 2, '#ffffff');
+      if (f === 3) { d.px(6, 0, '#ffffff'); d.px(6, 12, '#ffffff'); d.px(0, 6, '#ffffff'); d.px(12, 6, '#ffffff'); }
+    }
+  });
+
+  // scorch marks: the plumage burns away as the bird takes damage (spots on the body, they appear as the health falls)
+  Sprites.painted('s4_ph_burn', 7, 6, 2, (d, f) => {
+    d.ellipse(3, 2.6, 3.2, 2.5, '#2a0c18');
+    d.ellipse(3, 2.6, 2.2, 1.6, '#12060c');
+    d.px(1 + f, 1, '#ff8228'); d.px(5 - f, 4, '#ffc040'); d.px(4, 1 + f * 2, '#e8402c');
+  });
+  const S4_PH_WOUNDS = [[0.9, 8, -4], [0.8, 4, 9], [0.7, 12, 3], [0.6, -1, -6], [0.5, -11, 8], [0.4, 7, 12], [0.3, -12, -2], [0.2, 1, 12]]; // [health below, x, y] around the chest
+
+  // feather bullets: one sprite per aiming direction (16), two flicker frames; the bright tip leads
+  for (let k = 0; k < 16; k++) {
+    const a = (k / 16) * TAU;
+    Sprites.painted('s4_ph_fb' + k, 13, 13, 2, (d, f) => {
+      const ca = Math.cos(a), sa = Math.sin(a);
+      for (let j = -6; j <= 6; j += 0.5) {
+        const t = (j + 6) / 12;
+        const col = t > 0.86 ? '#fff6c8' : t > 0.6 ? (f ? '#ffe27c' : '#ffc040') : t > 0.32 ? (f ? '#ff9a2c' : '#ff7a24') : '#c02c2c';
+        d.circle(6 + ca * j, 6 + sa * j, t < 0.12 ? 0.6 : 1.5 - t * 0.5, col);
+      }
+      d.outline('#3a0808');
+    });
+  }
+  // fire-rain cinder (falls head first) and a drifting feather for the death scene
+  Sprites.painted('s4_ph_cinder', 7, 15, 2, (d, f) => {
+    d.poly([[1.4, 8], [3.5 + (f ? 0.8 : -0.8), 0], [5.6, 8]], 'r');
+    d.poly([[2.2, 8], [3.5 + (f ? 0.5 : -0.5), 2], [4.8, 8]], 'o');
+    d.circle(3.5, 7.5, 3.2, 'R');
+    d.circle(3.5, 7.5, 2.6, 'o');
+    d.circle(3.2, 7.1, 1.6, 'y');
+    d.px(3, 7, 'w');
+    d.outline('#3a0808');
+  });
+  Sprites.painted('s4_ph_fl', 9, 5, 3, (d, f) => {
+    const th = [0.35, 0, -0.35][f];
+    s4_feather(d, 1, 2.5, th, 7, 1.7, 0.6, S4_PH_RAMP);
+    d.outline(S4_PH_OUT);
+  });
+  // charred copies of body and head for the death scene
+  (function bakeCharred() {
+    for (const name of ['s4_ph_body', 's4_ph_head']) {
+      const cv = Sprites.store[name].frames.map((fr) => {
+        const c = Sprites.makeCanvas(fr.width, fr.height);
+        const g = c.getContext('2d', { willReadFrequently: true });
+        g.drawImage(fr, 0, 0);
+        const img = g.getImageData(0, 0, fr.width, fr.height), dd = img.data;
+        for (let i = 0; i < dd.length; i += 4) {
+          if (!dd[i + 3]) continue;
+          const k = Math.min(1, ((dd[i] * 0.3 + dd[i + 1] * 0.5 + dd[i + 2] * 0.2) / 255) * 1.25);
+          dd[i] = 26 + k * 74; dd[i + 1] = 18 + k * 50; dd[i + 2] = 30 + k * 56;
+        }
+        g.putImageData(img, 0, 0);
+        return c;
+      });
+      Sprites.fromCanvases(name + '_c', cv);
+    }
+  })();
 
   /* ---- custom terrain tile: charred basalt with faint strata and glowing fissures ---- */
   Terrain.TILES.s4_basalt = (sk, rng) => {
@@ -1487,6 +1680,725 @@
     },
   };
 
+  /* =====================================================================
+   * ASH PHOENIX — the boss of this stage (ENEMIES.s4_phoenix)
+   *
+   * A fast fire-bird. Unlike the old armoured core it never stands still: it hovers on the right, dive-bombs across the
+   * arena and leaves the screen, then flies back in. The wings are the shield (armour parts): folded in front of the
+   * chest they absorb every shot; the chest gem is the only weak point and is exposed only when the bird opens up.
+   *
+   *   HOVER   wings guard the gem. Feather volley: wings spread, gem glows (shoot it!), then a slow fan of feathers
+   *   DIVE    telegraph: the bird climbs to its launch point, a dotted lane shows the whole flight path (58 / 50 / 42
+   *           frames before the launch in phase 1 / 2 / 3); then it swoops across the arena with folded wings (gem
+   *           exposed), sheds a lingering ember trail, leaves the screen, a marker flashes at the entry edge, it flies
+   *           back in (harmless) and perches with open wings
+   *   phase 1 (100-70%)  feather volley + single dives (strafe along the ship's lane / diagonal slash / rise out of the lava)
+   *   phase 2 (70-40%)   + fire rain from the ceiling (columns with gaps), double pass (a second dive right after the
+   *                      first, on another lane), 7-feather volleys, the wings smoulder
+   *   phase 3 (40-0%)    the wings burn off: no armour (the gem is always exposed), faster passes, shorter pauses
+   * The gem cannot drop below the end of the current phase until the next one has started (a strong ship cannot skip
+   * the choreography); the move in progress is wrapped up quickly. Nothing hurts while the bird is off screen or
+   * still flying in, and the landing zone gently pushes the ship away while the bird comes in.
+   * ===================================================================== */
+  const S4_PH_HP = 123; // heart hit points before difficulty scaling
+  const S4_PH_FLOOR = [0.70, 0.40]; // the heart stays above these fractions until phase 2 / phase 3 has started
+  const S4_PH_HOME_X = 192;
+  const S4_PH_LAUNCH = [214, 46]; // top-right launch point of the 'slash' dive
+  const S4_PH_LAVA = 186; // lava surface of the arena (floor top)
+  const S4_PH_CEIL = 22; // ceiling of the arena
+  const S4_PH_NEXT = { slash: 'rise', strafe: 'slash', rise: 'strafe' }; // kind of the second pass of a double pass
+  const S4_PH_CFG = [
+    null,
+    { idle: 64, tel: 72, v0: 4.0, v1: 3.0, trail: 6, vol: 5, spread: 1.1, perch: 56 },
+    { idle: 52, tel: 64, v0: 4.6, v1: 3.6, trail: 6, vol: 7, spread: 1.7, perch: 40 },
+    { idle: 30, tel: 56, v0: 5.0, v1: 4.0, trail: 5, vol: 7, spread: 1.7, perch: 0 },
+  ];
+  const S4_PH_SEQ = [
+    null,
+    ['volley', 'dive:strafe', 'volley', 'dive:slash', 'volley', 'dive:rise'],
+    ['rain', 'dive:slash', 'volley', 'double', 'rain', 'dive:rise', 'volley', 'double'],
+    ['dive:strafe', 'volley', 'double', 'rain', 'dive:rise', 'volley', 'double'],
+  ];
+  const S4_PH_WBOX = Array.from({ length: 11 }, (_, f) => s4_wingBox(f / 5));
+  const s4_ease = (t) => t * t * (3 - 2 * t);
+
+  /** a flight path: gentle arc from p0 to p2 (bow > 0 bends it upwards), sampled into a polyline with arc lengths */
+  function s4_phPath(p0, p2, bow) {
+    const dx = p2[0] - p0[0], dy = p2[1] - p0[1], l = Math.hypot(dx, dy);
+    let nx = dy / l, ny = -dx / l;
+    if (ny > 0) { nx = -nx; ny = -ny; } // normal pointing up
+    const cx = (p0[0] + p2[0]) / 2 + nx * 2 * bow, cy = (p0[1] + p2[1]) / 2 + ny * 2 * bow;
+    const pts = [];
+    let s = 0;
+    for (let i = 0; i <= 90; i++) {
+      const t = i / 90, u = 1 - t;
+      const x = u * u * p0[0] + 2 * u * t * cx + t * t * p2[0], y = u * u * p0[1] + 2 * u * t * cy + t * t * p2[1];
+      if (i) s += Math.hypot(x - pts[i - 1].x, y - pts[i - 1].y);
+      pts.push({ x, y, s });
+    }
+    const ytab = new Float32Array(W).fill(NaN); // path height per screen column (the paths run right to left)
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i];
+      for (let x = Math.max(0, Math.ceil(Math.min(a.x, b.x))); x <= Math.min(W - 1, Math.floor(Math.max(a.x, b.x))); x++) {
+        ytab[x] = a.x === b.x ? a.y : a.y + ((x - a.x) / (b.x - a.x)) * (b.y - a.y);
+      }
+    }
+    return {
+      pts, len: s, ytab,
+      at(d) {
+        d = clamp(d, 0, s);
+        let lo = 0, hi = pts.length - 1;
+        while (hi - lo > 1) { const m = (lo + hi) >> 1; if (pts[m].s <= d) lo = m; else hi = m; }
+        const a = pts[lo], b = pts[hi], k = b.s > a.s ? (d - a.s) / (b.s - a.s) : 0;
+        return [a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k];
+      },
+    };
+  }
+
+  /** small chevron marker; dir: 'l' (points left), 'd' (down), 'u' (up) */
+  const s4_chev = (c, x, y, dir, col) => {
+    c.fillStyle = col;
+    for (let i = 0; i < 5; i++) {
+      if (dir === 'l') { c.fillRect(x + i, y - i, 2, 1); c.fillRect(x + i, y + i, 2, 1); }
+      else if (dir === 'd') { c.fillRect(x - i, y - i, 1, 2); c.fillRect(x + i, y - i, 1, 2); }
+      else { c.fillRect(x - i, y + i, 1, 2); c.fillRect(x + i, y + i, 1, 2); }
+    }
+  };
+  const s4_ringPx = (c, cx, cy, r) => {
+    const n = Math.max(12, Math.round(r * 5));
+    for (let i = 0; i < n; i++) c.fillRect(Math.round(cx + Math.cos((i * TAU) / n) * r), Math.round(cy + Math.sin((i * TAU) / n) * r), 1, 1);
+  };
+
+  ENEMIES.s4_phoenix = {
+    w: 74, h: 56, hp: 99999, score: 10000, keep: true, silentDeath: true, keepOnBoss: true,
+    init(e) {
+      const hh = S4_PH_HP * G.diff.hp * (1 + 0.25 * G.loop);
+      e.hp = e.maxHp = 99999;
+      e.seg = 1; // phase
+      e.st = 'enter';
+      e.stT = 0;
+      e.x = S4_PH_HOME_X;
+      e.y = H + 60;
+      e.by = 108;
+      e.pose = 0; // wing pose: 0 guarding, 1 spread, 2 swept back
+      e.poseT = 0;
+      e.tilt = 0; // -1 climbing, 0 level, 1 diving
+      e.harmless = true;
+      e.phaseQ = false; // the current phase is used up: finish the move, then change phase
+      e.pulse = 0;
+      e.si = 0;
+      e.move = 'volley';
+      e.idle = 0;
+      e.kind = 'slash';
+      e.passes = 0;
+      e.second = false;
+      e.lane = null;
+      e.cols = null;
+      e.aim = Math.PI;
+      e.entry = 'slash';
+      e.quick = false;
+      e.hurried = false;
+      e.hist = []; // recent positions during a pass (afterimages)
+      e.telT = 70;
+      e.rt0 = 40;
+      e.rdur = 62;
+      e.parts = [
+        { name: 'wingU', ox: -8, oy: -26, w: 36, h: 26, hp: 99999, vuln: false },
+        { name: 'wingL', ox: -8, oy: 26, w: 36, h: 26, hp: 99999, vuln: false },
+        { name: 'heart', ox: -8, oy: -2, w: 30, h: 32, hp: hh, max: hh, vuln: false, expl: 'xl', score: 5000 },
+      ];
+    },
+    go(e, st) {
+      e.st = st;
+      e.stT = 0;
+    },
+    /** a move is over: change phase if the gem has used up the current one, else pick the next move */
+    done(e) {
+      if (e.phaseQ) { this.go(e, 'phase'); return; }
+      const seq = S4_PH_SEQ[e.seg];
+      e.move = seq[e.si++ % seq.length];
+      e.idle = Math.round(G.fireDelay(S4_PH_CFG[e.seg].idle));
+      this.go(e, 'hover');
+    },
+    begin(e, mv) {
+      if (mv === 'volley' || mv === 'rain') { this.go(e, mv); return; }
+      e.kind = mv === 'double' ? (chance(0.5) ? 'slash' : 'strafe') : mv.slice(5);
+      e.passes = mv === 'double' ? 2 : 1;
+      e.second = false;
+      this.go(e, 'climb');
+    },
+    /** station keeping on the right: follows the player's height loosely and bobs */
+    hover(e, P, track, vmax) {
+      if (track) e.by += clamp((clamp(0.55 * P.y + 50, 80, 138) - e.by) * 0.035, -vmax, vmax);
+      const k = e.seg === 3 ? 1.6 : 1;
+      const tx = S4_PH_HOME_X + Math.sin(e.t * 0.027 * k) * 6 * k, ty = e.by + Math.sin(e.t * 0.06 * k) * 2.4;
+      e.x += (tx - e.x) * 0.25;
+      e.y += (ty - e.y) * 0.25;
+    },
+    /** lock the lane of a pass on the player and build the path (and its warning preview) */
+    lockLane(e, P) {
+      const kind = e.kind;
+      let p0, p2, bow = 0;
+      const qx = clamp(P.alive ? P.x : 60, 40, 120); // the path goes through the ship's position at this moment
+      if (kind === 'strafe') {
+        const qy = clamp(P.alive ? P.y : 112, 60, 156);
+        p0 = [226, qy]; p2 = [-110, qy + 6];
+      } else if (kind === 'slash') {
+        const qy = clamp(P.alive ? P.y : 112, 72, 128);
+        p0 = S4_PH_LAUNCH.slice();
+        p2 = [-110, p0[1] + (qy - p0[1]) * ((p0[0] + 110) / (p0[0] - qx))];
+        bow = 14;
+      } else {
+        const qy = clamp(P.alive ? P.y : 112, 96, 150);
+        p0 = [232, S4_PH_LAVA - 2];
+        p2 = [-110, p0[1] + (qy - p0[1]) * ((p0[0] + 110) / (p0[0] - qx))];
+        bow = -14;
+      }
+      const path = s4_phPath(p0, p2, bow);
+      // danger band = what the hurting boxes sweep (+ the ship's half height). On a slanted path the parts behind the
+      // heart are lower (descending) or higher (rising) than the path at the same column, so the band is lopsided.
+      const slope = (p2[1] - p0[1]) / (p0[0] - p2[0]); // > 0: descends towards the left
+      const winged = !e.parts[0].dead;
+      const baseTop = 23, baseBot = winged ? 23 : 19, front = 23, back = winged ? 40 : 7; // the heart box sits 2 px above the centre line
+      const hTop = Math.round(baseTop + 1 + (slope > 0 ? slope * front : -slope * back));
+      const hBot = Math.round(baseBot + 1 + (slope > 0 ? slope * back : -slope * front));
+      e.lane = { kind, path, hTop, hBot, half: Math.max(hTop, hBot), t0: e.stT };
+      e.start = p0;
+    },
+    update(e) {
+      const P = G.player, cfg = S4_PH_CFG[e.seg];
+      if (e.phaseQ && !e.hurried) { e.hurried = true; this.hurryUp(e); }
+      e.stT++;
+      if (e.pulse > 0) e.pulse--;
+      // the bird must never crush the ship while it flies in: the landing zone gently pushes the ship away
+      if ((e.st === 'enter' || e.st === 'return' || e.st === 'phase') && P.alive && e.x > 150 && P.x > e.x - 66 && Math.abs(P.y - e.y) < 60) P.x = Math.max(14, P.x - 1.4);
+      const T = e.stT;
+      switch (e.st) {
+        /* ---- bursts out of the lava, spreads its wings ---- */
+        case 'enter': {
+          e.harmless = true;
+          if (T === 1) { sfx('eruption'); G.shake = Math.max(G.shake, 4); }
+          if (T < 56 && T % 2 === 0) this.spit(S4_PH_HOME_X + rnd(-16, 16), S4_PH_LAVA, 1);
+          if (T >= 22) {
+            const u = Math.min(1, (T - 22) / 78);
+            e.y = lerp(H + 60, 110, 1 - Math.pow(1 - u, 2.2));
+            e.x = S4_PH_HOME_X + Math.sin(T * 0.06) * 3;
+            e.tilt = u < 0.85 ? -1 : 0;
+            if (Math.abs(e.y + 26 - S4_PH_LAVA) < 10 && T % 2 === 0) this.spit(e.x + rnd(-14, 14), S4_PH_LAVA, 1);
+          }
+          e.by = 110;
+          if (T === 80) { e.poseT = 1; sfx('coreOpen'); }
+          if (T === 108) e.poseT = 0;
+          if (T >= 128) { e.harmless = false; this.done(e); }
+          break;
+        }
+        /* ---- idle: wings guard the gem ---- */
+        case 'hover': {
+          e.harmless = false;
+          e.poseT = 0;
+          e.tilt = 0;
+          this.hover(e, P, true, e.seg === 3 ? 0.9 : 0.6);
+          if (e.phaseQ) { this.go(e, 'phase'); break; }
+          if (P.alive && --e.idle <= 0) this.begin(e, e.move);
+          break;
+        }
+        /* ---- feather volley: wings open (gem exposed), aim locks, fan of slow feathers ---- */
+        case 'volley': {
+          this.hover(e, P, false, 0);
+          if (T === 1) { e.poseT = e.seg === 3 ? 0 : 1; sfx('coreOpen'); }
+          if (T === 26) e.aim = Math.atan2(P.y - (e.y - 8), P.x - (e.x - 30));
+          if (T === 42 && G.canFire(e)) {
+            const n = cfg.vol, ox = e.x - 30, oy = e.y - 8;
+            for (let i = 0; i < n; i++) {
+              const a = e.aim + (n === 1 ? 0 : (i / (n - 1) - 0.5) * cfg.spread);
+              const kk = Math.round((((a % TAU) + TAU) % TAU) / (TAU / 16)) & 15;
+              G.ebullet(ox, oy, Math.cos(a) * 1.5, Math.sin(a) * 1.5, { spr: 's4_ph_fb' + kk, w: 5, h: 5, anim: 6, quiet: i > 0 });
+            }
+          }
+          if (T === 66) e.poseT = 0;
+          if (T >= 88) this.done(e);
+          break;
+        }
+        /* ---- fire rain: wings up, the ceiling glows in columns, embers fall (gaps left) ---- */
+        case 'rain': {
+          this.hover(e, P, false, 0);
+          e.by = clamp(e.by, 80, 136);
+          const waves = e.seg === 3 ? 3 : 2;
+          if (T === 1) { e.poseT = e.seg === 3 ? 0 : 1; sfx('eruption'); }
+          const w = Math.floor((T - 1) / 56), tw = (T - 1) % 56;
+          if (w < waves && tw === 0) { this.planRain(e, P); sfx('electric'); }
+          if (w < waves && tw === 46 && e.cols) {
+            if (P.alive) for (const x of e.cols) G.ebullet(x, S4_PH_CEIL + 4, 0, 1.6, { spr: 's4_ph_cinder', w: 5, h: 7, anim: 8, quiet: true });
+            e.cols = null;
+          }
+          if (T === 56 * waves + 4) e.poseT = 0;
+          if (T >= 56 * waves + 28) this.done(e);
+          break;
+        }
+        /* ---- dive telegraph: wings fold, the bird climbs to its launch point, the lane shows where it will fly ---- */
+        case 'climb': {
+          const tel = e.second ? 56 : cfg.tel;
+          e.telT = tel;
+          if (T === tel - 16) sfx('electric'); // last cue before the launch: the bird charges
+          if (T === 1) {
+            sfx(e.second ? 'warp' : 'bossLaser');
+            e.poseT = 2;
+            e.from = e.second ? (e.kind === 'rise' ? [W + 60, H + 50] : [W + 60, -30]) : [e.x, e.y];
+            e.harmless = !!e.second;
+            e.tilt = e.kind === 'slash' ? 1 : e.kind === 'rise' ? -1 : 0;
+          }
+          if (T === (e.second ? 1 : 14)) { this.lockLane(e, P); sfx('ring'); }
+          if (e.lane) {
+            const u = s4_ease(clamp((T - (e.second ? 1 : 14)) / (e.second ? 34 : 46), 0, 1));
+            e.x = lerp(e.from[0], e.start[0], u);
+            e.y = lerp(e.from[1], e.start[1], u);
+            if (u >= 1 && T < tel) { e.x += rnd(-0.6, 0.6); e.y += rnd(-0.6, 0.6); } // coiled, about to launch
+            if (e.kind === 'rise') this.spitNear(e);
+          } else { e.x += (e.from[0] - e.x) * 0.1; }
+          if (e.second && T === 30) e.harmless = false;
+          if (T >= tel) { this.go(e, 'pass'); e.harmless = false; e.pd = 0; }
+          break;
+        }
+        /* ---- the pass: swoop along the locked path, folded wings, ember trail ---- */
+        case 'pass': {
+          const path = e.lane.path;
+          if (T === 1) { sfx('warp'); G.shake = Math.max(G.shake, 2); e.hist.length = 0; }
+          const v = lerp(cfg.v0, cfg.v1, e.pd / path.len) * (0.35 + 0.65 * Math.min(1, T / 16)) * Math.sqrt(G.bulletMul()); // eases into the dive; easier / harder levels fly slower / faster
+          e.pd += v;
+          const pos = path.at(e.pd);
+          e.x = pos[0];
+          e.y = pos[1];
+          e.hist.push([e.x, e.y]);
+          if (e.hist.length > 12) e.hist.shift();
+          if (e.kind === 'rise') this.spitNear(e);
+          if (T % cfg.trail === 0 && P.alive && e.x > 6 && e.x < W - 14) {
+            G.ebullet(e.x + 10, e.y + rnd(-3, 3), 0, 0, { spr: 's4_ember', w: 5, h: 5, anim: 5, life: 72, quiet: true, solid: false });
+          }
+          G.fx.push({ k: 'part', x: e.x + 24 + rnd(-4, 8), y: e.y + rnd(-12, 12), vx: rnd(0, 0.7), vy: rnd(-0.5, 0.2), life: rndi(16, 34), t: 0, col: pick(EMBER_COLS), big: chance(0.35) });
+          if (e.pd >= path.len) {
+            e.harmless = true;
+            e.lane = null;
+            e.passes--;
+            if (e.passes > 0 && !e.phaseQ) { e.second = true; e.kind = S4_PH_NEXT[e.kind]; this.go(e, 'climb'); } else { e.quick = e.phaseQ; this.go(e, 'away'); }
+          }
+          break;
+        }
+        /* ---- off screen: nothing hurts ---- */
+        case 'away': {
+          e.harmless = true;
+          e.x = -200;
+          if (T >= 20) this.go(e, 'return');
+          break;
+        }
+        /* ---- marker at the entry edge, then the bird glides in (harmless) and perches ---- */
+        case 'return': {
+          e.harmless = true;
+          if (T === 1) {
+            e.entry = e.kind;
+            e.by = clamp(0.5 * P.y + 56, 84, 138);
+            e.tilt = e.kind === 'slash' ? 1 : e.kind === 'rise' ? -1 : 0;
+            e.poseT = e.seg === 3 ? 0 : 1;
+            if (e.quick && e.x > -60 && e.x < W + 60) { // aborted dive: glide back from where it is
+              e.from = [e.x, e.y]; e.rt0 = 0; e.rdur = 44; e.tilt = 0;
+            } else {
+              e.from = e.kind === 'slash' ? [W + 50, -40] : e.kind === 'rise' ? [W + 6, H + 64] : [W + 74, e.by - 14];
+              e.rt0 = e.quick ? 24 : 40; e.rdur = e.quick ? 48 : 62; // (a shorter marker when the phase is over anyway)
+              sfx('ring');
+            }
+            e.quick = false;
+            e.x = e.from[0];
+            e.y = e.from[1];
+          }
+          if (T < e.rt0) { e.x = e.from[0]; e.y = e.from[1]; break; }
+          if (T === e.rt0 && e.rt0 > 0) sfx('warp');
+          const u = clamp((T - e.rt0) / e.rdur, 0, 1), k = 1 - Math.pow(1 - u, 2.6);
+          e.x = lerp(e.from[0], S4_PH_HOME_X, k);
+          e.y = lerp(e.from[1], e.by, k);
+          if (e.kind === 'rise') this.spitNear(e);
+          if (T >= e.rt0 + e.rdur - 6) e.tilt = 0;
+          if (T >= e.rt0 + e.rdur + 22) { e.harmless = false; if (e.phaseQ || !cfg.perch) this.done(e); else this.go(e, 'perch'); }
+          break;
+        }
+        /* ---- perched with open wings after the pass: the gem is exposed for a while ---- */
+        case 'perch': {
+          e.harmless = false;
+          this.hover(e, P, true, 0.4);
+          if (T === 1) { e.poseT = 1; e.tilt = 0; }
+          if (T === cfg.perch) e.poseT = 0;
+          if (T >= cfg.perch + 18) this.done(e);
+          break;
+        }
+        /* ---- phase change: the gem is used up, the plumage flares (phase 3: the wings burn off) ---- */
+        case 'phase': {
+          e.harmless = true;
+          e.tilt = 0;
+          this.hover(e, P, false, 0);
+          e.by += (108 - e.by) * 0.05;
+          if (T === 1) {
+            for (const b of G.eb) b.dead = true;
+            e.poseT = 1;
+            sfx('bossLaser');
+            G.shake = Math.max(G.shake, 5);
+            if (!G.reduceFlash) G.flash = Math.max(G.flash, 3);
+            for (let i = 0; i < 36; i++) { const a = (i / 36) * TAU, sp = rnd(0.8, 2.2); G.fx.push({ k: 'part', x: e.x - 5, y: e.y + 3, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: rndi(26, 50), t: 0, col: pick(EMBER_COLS), big: chance(0.4) }); }
+          }
+          if (T % 5 === 0) this.spit(e.x + rnd(-30, 30), e.y + rnd(-26, 26), 0);
+          if (e.seg === 2 && T === 56) this.burnWings(e);
+          if (T === 74 && e.seg === 1) sfx('explodeM');
+          if (T >= 104) {
+            e.seg++;
+            e.phaseQ = false;
+            e.hurried = false;
+            e.harmless = false;
+            e.si = 0;
+            e.poseT = 0;
+            e.pulse = 0;
+            this.done(e);
+            e.idle = Math.min(e.idle, 40);
+          }
+          break;
+        }
+        default: break;
+      }
+      this.limbs(e);
+    },
+    /** the gem is used up for this phase: wrap the current move up quickly (nothing can be hurt any more anyway) */
+    hurryUp(e) {
+      switch (e.st) {
+        case 'volley': e.stT = Math.max(e.stT, 62); break; // no feathers if they were not fired yet
+        case 'rain': e.cols = null; e.stT = Math.max(e.stT, 56 * (e.seg === 3 ? 3 : 2)); break;
+        case 'perch': e.stT = Math.max(e.stT, S4_PH_CFG[e.seg].perch); break;
+        case 'climb': e.lane = null; e.quick = true; e.passes = 0; this.go(e, 'return'); break; // glide back instead of diving
+        default: break;
+      }
+    },
+    /** wings (pose -> boxes) and the weak point (exposed only when the bird has opened up) */
+    limbs(e) {
+      const wu = e.parts[0], wl = e.parts[1], heart = e.parts[2];
+      e.pose += clamp(e.poseT - e.pose, -0.075, 0.075);
+      const wb = S4_PH_WBOX[clamp(Math.round(e.pose * 5), 0, 10)];
+      const wy = (wb[1] + wb[3]) / 2;
+      wu.ox = wl.ox = S4_PH_SH[0] + (wb[0] + wb[2]) / 2;
+      wu.oy = S4_PH_SH[1] + wy;
+      wl.oy = 14 - wy;
+      wu.w = wl.w = wb[2] - wb[0];
+      wu.h = wl.h = wb[3] - wb[1];
+      heart.oy = -2 + e.tilt * 1.2;
+      let open = false;
+      if (!e.phaseQ && !e.harmless && e.st !== 'enter' && e.st !== 'away' && e.st !== 'return' && e.st !== 'phase') {
+        open = e.seg === 3 || e.pose > (e.st === 'climb' || e.st === 'pass' ? 1.5 : 0.8);
+      }
+      heart.vuln = open;
+    },
+    /** embers spitting out of the lava (entrance / lava launch) or around the bird (phase changes) */
+    spit(x, y, up) {
+      for (let i = 0; i < 3; i++) {
+        G.fx.push({ k: 'part', x: x + rnd(-5, 5), y, vx: rnd(-0.8, 0.8), vy: -(up ? rnd(0.8, 2.4) : rnd(-0.6, 0.6)), life: rndi(20, 44), t: 0, col: pick(EMBER_COLS), big: chance(0.4) });
+      }
+    },
+    spitNear(e) {
+      if (Math.abs(e.y + 24 - S4_PH_LAVA) < 12 && e.x > -20 && e.x < W + 20 && (e.t & 1) === 0) this.spit(e.x + rnd(-14, 14), S4_PH_LAVA - 1, 1);
+    },
+    /** choose the columns of a fire-rain wave: two gaps (one within reach of the ship) */
+    planRain(e, P) {
+      const g1 = clamp((P.alive ? P.x : 100) + rnd(-36, 36), 46, 206);
+      let g2 = rnd(40, 216);
+      for (let k = 0; k < 8 && Math.abs(g2 - g1) < 96; k++) g2 = rnd(40, 216);
+      const cols = [];
+      for (let x = 12; x <= 246; x += 14) if (Math.abs(x - g1) >= 28 && Math.abs(x - g2) >= 28) cols.push(x);
+      e.cols = cols;
+      e.colsT = e.t;
+    },
+    burnWings(e) {
+      for (const p of [e.parts[0], e.parts[1]]) {
+        p.dead = true;
+        G.explode(e.x + p.ox, e.y + p.oy, 'm', { quiet: p === e.parts[1] });
+        G.debris(e.x + p.ox, e.y + p.oy, 14);
+        for (let i = 0; i < 12; i++) G.fx.push({ k: 'part', x: e.x + p.ox + rnd(-16, 16), y: e.y + p.oy + rnd(-12, 12), vx: rnd(-1.2, 1.2), vy: rnd(-1.2, 0.4), life: rndi(24, 56), t: 0, col: pick(EMBER_COLS), big: chance(0.45) });
+      }
+      sfx('explodeL');
+      G.shake = Math.max(G.shake, 7);
+      if (!G.reduceFlash) G.flash = Math.max(G.flash, 5);
+    },
+    onPartHurt(e, p) {
+      if (p.name !== 'heart' || e.seg >= 3) return;
+      const fl = S4_PH_FLOOR[e.seg - 1] * p.max;
+      if (p.hp <= fl) {
+        p.hp = fl; // this phase is used up: the gem is shielded until the next phase has begun
+        if (!e.phaseQ) {
+          e.phaseQ = true;
+          e.pulse = 16;
+          sfx('shieldHit');
+          G.spark(e.x - 8, e.y);
+          G.spark(e.x + 2, e.y + 8);
+        }
+      }
+    },
+    onPartDeath(e, p) {
+      if (p.name === 'heart') G.kill(e);
+    },
+    gauge(e) {
+      const h = e.parts[2];
+      return h.dead ? 0 : Math.max(0, h.hp) / h.max;
+    },
+    onDeath(e) {
+      G.fx.push({ k: 'fn', x: e.x, y: e.y, t: 0, life: 136, draw: (c, f) => ENEMIES.s4_phoenix.drawWreck(e, c, f) });
+      // the body bursts into drifting embers and feathers
+      for (let i = 0; i < 40; i++) {
+        G.later(i * 3, () => {
+          const a = rnd(TAU), r = rnd(4, 30);
+          G.fx.push({ k: 'part', x: e.x + Math.cos(a) * r, y: e.y + Math.sin(a) * r * 0.8, vx: Math.cos(a) * rnd(0.2, 1.4), vy: Math.sin(a) * rnd(0.2, 1.2) - 0.5, life: rndi(34, 70), t: 0, col: pick(EMBER_COLS), big: chance(0.45) });
+        });
+      }
+      for (let i = 0; i < 18; i++) {
+        G.later(rndi(50, 130), () => {
+          const a = rnd(TAU), r = rnd(4, 26), sx = e.x + Math.cos(a) * r, sy = e.y + Math.sin(a) * r * 0.8;
+          const vx = Math.cos(a) * rnd(0.3, 1.1), vy = rnd(-0.9, -0.1), ph = rnd(TAU), fr = rndi(0, 2), life = rndi(150, 250);
+          G.fx.push({
+            k: 'fn', x: sx, y: sy, t: 0, life,
+            draw: (c, f) => {
+              const t = f.t;
+              const x = sx + vx * t * Math.pow(0.992, t) + Math.sin(t * 0.07 + ph) * 3;
+              const y = sy + vy * t + 0.0042 * t * t;
+              Sprites.draw(c, 's4_ph_fl', x, y, { frame: fr + ((t >> 4) & 1), alpha: Math.min(1, (life - t) / 30) });
+            },
+          });
+        });
+      }
+      G.bossDefeated(e);
+    },
+    drawWreck(e, c, f) {
+      const t = f.t, jx = rndi(-1, 1), jy = rndi(-1, 1);
+      const fade = t < 100 ? 1 : Math.max(0, 1 - (t - 100) / 34);
+      const x = Math.round(f.x + jx), y = Math.round(f.y + jy + Math.min(8, t * 0.07));
+      const tf = ((t >> 2) & 3) + (e.tilt + 1) * 4;
+      c.globalAlpha = fade;
+      const hit = !G.reduceFlash && (t >> 2) % 4 === 0;
+      Sprites.drawTL(c, t < 26 ? 's4_ph_body' : 's4_ph_body_c', x - S4_PH_BX, y - S4_PH_BY, { frame: tf, flash: hit });
+      Sprites.drawTL(c, t < 26 ? 's4_ph_head' : 's4_ph_head_c', x - 18 - S4_PH_HX, y - 10 + Math.round(e.tilt * 2.5) - S4_PH_HY, { frame: (t >> 3) & 1, flash: hit });
+      // the heart burns through
+      Sprites.draw(c, 's4_ph_gem', x - 5, y + 3, { frame: 2 + ((t >> 2) & 1) });
+      // flames licking over the husk
+      for (let i = 0; i < 4; i++) {
+        const fx = x - 18 + ((i * 17 + (t >> 3) * 7) % 38), fy = y - 10 + ((i * 11 + (t >> 2) * 5) % 26);
+        Sprites.draw(c, 's4_flame_s', fx, fy, { frame: ((t >> 2) + i) & 3, alpha: 0.85 });
+      }
+      c.globalAlpha = 1;
+    },
+    /* ---------------------------------------------------------------- drawing */
+    /** wings, body, gem and head at (px, py); ghost = a faded afterimage without gem and overlays */
+    drawBird(e, c, px, py, ghost) {
+      const heart = e.parts[2];
+      const frame = (e.tilt + 1) * 4 + ((e.t >> 2) & 3);
+      const wf = clamp(Math.round(e.pose * 5), 0, 10);
+      const winged = !e.parts[0].dead;
+      const wings = () => {
+        if (!winged) return;
+        Sprites.drawTL(c, 's4_ph_wing', px + S4_PH_SH[0] - S4_PH_WSX, py + S4_PH_SH[1] - S4_PH_WSY, { frame: wf });
+        Sprites.drawTL(c, 's4_ph_wing', px + S4_PH_SH[0] - S4_PH_WSX, py + 14 - (S4_PH_WH - 1 - S4_PH_WSY), { frame: wf, flipY: true });
+      };
+      const wingsBehind = e.pose >= 0.6;
+      if (wingsBehind) wings();
+      Sprites.drawTL(c, 's4_ph_body', px - S4_PH_BX, py - S4_PH_BY, { frame });
+      if (!ghost) {
+        const hpk = heart.hp / heart.max;
+        for (const [thr, ox, oy] of S4_PH_WOUNDS) if (hpk < thr) Sprites.draw(c, 's4_ph_burn', px + ox, py + oy + Math.round(e.tilt * 0.6), { frame: (e.t >> 4) & 1 });
+        // the heart gem: dim and shielded, or white-hot when it can be hurt
+        const beat = G.reduceFlash ? 0 : (e.t >> 3) & 1;
+        let gf = heart.vuln || e.seg === 3 ? 2 + beat : (e.t >> 4) & 1;
+        if (heart.flash > 0) gf = 3;
+        if (e.phaseQ && !G.reduceFlash && (e.t >> 2) & 1) gf = 1;
+        Sprites.draw(c, 's4_ph_gem', px - 5, py + 3, { frame: gf });
+      }
+      if (!wingsBehind) wings();
+      if (!ghost && winged && e.seg === 2) { // phase 2: the wings smoulder, little flames lick from the feather tips
+        const fe = s4_wingFeathers(e.pose);
+        for (const n of [1, 3, 5]) {
+          const tx = px + S4_PH_SH[0] + Math.cos(fe[n].th) * fe[n].L * 0.93, ty = fe[n].L * 0.93 * Math.sin(fe[n].th);
+          const fr = ((e.t >> 2) + n) & 3;
+          Sprites.draw(c, 's4_flame_s', tx, py + S4_PH_SH[1] + ty - 4, { frame: fr, alpha: 0.85 });
+          Sprites.draw(c, 's4_flame_s', tx, py + 14 - ty + 4, { frame: fr, flipY: true, alpha: 0.85 });
+        }
+      }
+      if (!ghost && !winged) { // the wings are burning stumps of flame
+        for (const [fx, fy, up] of [[3, -20, 1], [-7, -16, 1], [3, 21, 0], [-7, 17, 0]]) {
+          Sprites.draw(c, 's4_flame_m', px + fx, py + fy, { frame: ((e.t >> 2) + fx) & 3, flipY: !up, alpha: 0.92 });
+        }
+      }
+      Sprites.drawTL(c, 's4_ph_head', px - 18 - S4_PH_HX, py - 10 + Math.round(e.tilt * 2.5) - S4_PH_HY, { frame: (e.t >> 3) & 1 });
+    },
+    draw(e, c) {
+      const heart = e.parts[2];
+      const px = Math.round(e.x), py = Math.round(e.y);
+      this.drawMarks(e, c);
+      if (e.x < -90 || e.x > W + 110 || e.y < -80 || e.y > H + 110) return;
+      // while it rises out of / sinks into the lava the part below the surface is hidden
+      const clip = e.y + 26 > S4_PH_LAVA;
+      if (clip) { c.save(); c.beginPath(); c.rect(0, 0, W, S4_PH_LAVA + 1); c.clip(); }
+      const open = heart.vuln;
+      const hot = open || e.seg === 3;
+      if (e.st === 'enter' && e.stT < 84) { // the lava bursts open where the bird comes out: a fountain of fire
+        const T = e.stT, k = Math.min(1, T / 16) * Math.min(1, (84 - T) / 24);
+        Sprites.draw(c, 's4_glow_2', S4_PH_HOME_X, S4_PH_LAVA - 2, { alpha: 0.5 * k });
+        for (let i = 0; i < 4; i++) {
+          const fx = S4_PH_HOME_X + (i - 1.5) * 9 + Math.sin(T * 0.3 + i) * 2;
+          const rise = 9 + 14 * Math.min(1, T / 40) + (i & 1) * 6;
+          Sprites.draw(c, 's4_flame_l', fx, S4_PH_LAVA - rise, { frame: ((T >> 2) + i) & 3, alpha: 0.85 * k });
+        }
+      }
+      // heat glow behind the bird
+      Sprites.draw(c, 's4_glow_2', px - 4, py, { alpha: (hot ? 0.26 : 0.16) + 0.05 * Math.sin(e.t * 0.2) });
+      if (e.st === 'phase') { // flare of a phase change: pulsing white-hot glow behind the bird
+        const k = Math.sin(Math.min(1, e.stT / 104) * Math.PI);
+        Sprites.draw(c, 's4_glow_2', px - 4, py, { alpha: 0.3 + 0.5 * k });
+        Sprites.draw(c, 's4_glow_2', px - 4, py, { alpha: 0.25 + 0.4 * k });
+      }
+      if (e.seg === 3) { // burning plumes streaming behind the wingless bird
+        for (let i = 0; i < 3; i++) Sprites.draw(c, 's4_flame_m', px + 24 + i * 9, py + 2 + (i & 1) * 9, { frame: ((e.t >> 2) + i) & 3, alpha: 0.75 });
+      }
+      // speed: faded afterimages of the bird along its flight path
+      if (e.st === 'pass') {
+        for (const [k, a] of [[9, 0.12], [5, 0.22]]) {
+          const h = e.hist[e.hist.length - 1 - k];
+          if (!h) continue;
+          c.globalAlpha = a;
+          this.drawBird(e, c, Math.round(h[0]), Math.round(h[1]), true);
+          c.globalAlpha = 1;
+        }
+      }
+      this.drawBird(e, c, px, py, false);
+      if (heart.flash > 0 && !G.reduceFlash) { // a hit lightens the bird a little (no solid white strobing)
+        c.globalAlpha = 0.3;
+        const frame = (e.tilt + 1) * 4 + ((e.t >> 2) & 3);
+        Sprites.drawTL(c, 's4_ph_body', px - S4_PH_BX, py - S4_PH_BY, { frame, flash: true });
+        Sprites.drawTL(c, 's4_ph_head', px - 18 - S4_PH_HX, py - 10 + Math.round(e.tilt * 2.5) - S4_PH_HY, { frame: (e.t >> 3) & 1, flash: true });
+        c.globalAlpha = 1;
+      }
+      if (open && !e.harmless) {
+        // "shoot here": pulsing halo around the gem
+        c.fillStyle = !G.reduceFlash && (e.t >> 3) & 1 ? '#ffe646' : '#ff9424';
+        s4_ringPx(c, px - 5, py + 3, 10 + ((e.t >> 4) & 1));
+      }
+      if (e.st === 'phase') this.drawPhase(e, c, px, py);
+      // last frames before a launch: the bird charges (bright glow, sparks converge on the gem)
+      if (e.st === 'climb' && e.lane && e.stT >= e.telT - 16) {
+        Sprites.draw(c, 's4_glow_2', px - 4, py, { alpha: 0.35 });
+        for (let i = 0; i < 4; i++) {
+          const a = e.t * 0.45 + i * 1.57, r = 26 - ((e.t * 2 + i * 6) % 24);
+          c.fillStyle = i & 1 ? '#fff2b0' : '#ffb83c';
+          c.fillRect(Math.round(px - 5 + Math.cos(a) * r), Math.round(py + 3 + Math.sin(a) * r), 2, 2);
+        }
+      }
+      if (e.pulse > 0) { // the gem is armoured again: a ring bursts out of it
+        c.fillStyle = '#ffffff';
+        s4_ringPx(c, px - 5, py + 3, 6 + (16 - e.pulse) * 1.6);
+      }
+      if (e.phaseQ && e.st !== 'phase') {
+        // armour back up until the next phase: a flickering heat shield around the gem
+        c.fillStyle = !G.reduceFlash && (e.t >> 1) & 1 ? '#a8f0ff' : '#48b8f4';
+        for (let i = 0; i < 18; i++) {
+          const a = (i / 18) * TAU + e.t * 0.12;
+          c.fillRect(Math.round(px - 5 + Math.cos(a) * 11), Math.round(py + 3 + Math.sin(a) * 11), 1, 1);
+        }
+      }
+      if (clip) c.restore();
+    },
+    /** the flare of a phase change: flames flaring around the bird and expanding rings of embers */
+    drawPhase(e, c, px, py) {
+      const T = e.stT, k = Math.sin(Math.min(1, T / 104) * Math.PI);
+      for (let i = 0; i < 5; i++) {
+        const a = i * 1.26 + T * 0.03;
+        Sprites.draw(c, 's4_flame_l', px + Math.cos(a) * 28, py + Math.sin(a) * 24 + 4, { frame: ((T >> 2) + i) & 3, alpha: 0.35 + 0.4 * k });
+      }
+      for (const t0 of [0, 26, 52]) {
+        const r = ((T - t0) * 1.7) | 0;
+        if (T < t0 || r > 92) continue;
+        c.fillStyle = (T >> 2) & 1 ? '#fff2b0' : '#ff9424';
+        s4_ringPx(c, px - 5, py + 3, r);
+      }
+    },
+    drawMarks(e, c) {
+      const P = G.player;
+      const blink = G.reduceFlash || ((e.t >> 2) & 1) === 0;
+      // ---- dive lane: the whole flight path with its danger band ----
+      const L = e.lane;
+      if (L && (e.st === 'climb' || e.st === 'pass')) {
+        const a = Math.min(1, (e.stT - (e.st === 'pass' ? -40 : L.t0)) / 8);
+        if (a > 0) {
+          const y = L.path.ytab;
+          c.fillStyle = 'rgba(255,96,40,' + (a * (blink ? 0.27 : 0.17)).toFixed(3) + ')';
+          const xMax = e.st === 'pass' ? Math.min(W, Math.round(e.x) + 10) : W; // the part of the lane the bird has passed fades away
+          for (let x = 0; x < xMax; x++) if (y[x] === y[x]) c.fillRect(x, Math.round(y[x] - L.hTop), 1, L.hTop + L.hBot);
+          c.fillStyle = blink ? '#ffe646' : '#ff9424';
+          for (let x = 0; x < xMax; x += 2) {
+            if (y[x] !== y[x]) continue;
+            c.fillRect(x, Math.round(y[x] - L.hTop), 1, 1);
+            c.fillRect(x, Math.round(y[x] + L.hBot), 1, 1);
+          }
+          // centre line of the flight, dotted
+          let nextS = 0;
+          for (const pt of L.path.pts) {
+            if (pt.s < nextS) continue;
+            nextS += 8;
+            c.fillStyle = (nextS / 8 + (e.t >> 3)) & 1 ? '#fff2b0' : '#ff7a24';
+            if (pt.x > -2 && pt.x < xMax) c.fillRect(Math.round(pt.x), Math.round(pt.y), 2, 2);
+          }
+          // arrows on the left edge: it will leave here
+          const ey = y[6] === y[6] ? y[6] : y[10];
+          if (ey === ey) { s4_chev(c, 5, Math.round(ey), 'l', blink ? '#ffffff' : '#ff9424'); s4_chev(c, 13, Math.round(ey), 'l', blink ? '#ff9424' : '#ffffff'); }
+        }
+      }
+      // ---- the way back in: marker at the entry edge (flashing chevrons + a glowing gate) ----
+      if (e.st === 'return' && e.rt0 > 0 && e.stT < e.rt0 + 4) {
+        const a = Math.min(1, e.stT / 6), col = blink ? '#ffffff' : '#ff5a24', col2 = blink ? '#ff9424' : '#ffffff';
+        c.globalAlpha = a;
+        if (e.entry === 'slash') {
+          Sprites.draw(c, 's4_glow_2', W - 20, 6, { alpha: 0.5 });
+          c.fillStyle = col2; c.fillRect(W - 56, S4_PH_CEIL + 1, 56, 2);
+          for (let i = 0; i < 3; i++) s4_chev(c, W - 28, 30 + i * 9, 'd', i & 1 ? col2 : col);
+        } else if (e.entry === 'rise') {
+          Sprites.draw(c, 's4_glow_2', W - 18, S4_PH_LAVA - 2, { alpha: 0.55 });
+          c.fillStyle = col2; c.fillRect(W - 56, S4_PH_LAVA - 3, 56, 2);
+          for (let i = 0; i < 3; i++) s4_chev(c, W - 28, S4_PH_LAVA - 14 - i * 9, 'u', i & 1 ? col2 : col);
+        } else {
+          const gy = Math.round(e.by - 14);
+          Sprites.draw(c, 's4_glow_2', W - 4, gy, { alpha: 0.5 });
+          c.fillStyle = col2; c.fillRect(W - 3, gy - 24, 3, 48);
+          for (let i = 0; i < 3; i++) s4_chev(c, W - 36 + i * 10, gy, 'l', i & 1 ? col2 : col);
+        }
+        c.globalAlpha = 1;
+      }
+      // ---- fire rain: the ceiling glows where the embers will drop ----
+      if (e.st === 'rain' && e.cols) {
+        const k = Math.min(1, (e.t - e.colsT) / 40);
+        for (const x of e.cols) {
+          Sprites.draw(c, 's4_glow_0', x, S4_PH_CEIL + 6, { alpha: 0.2 + 0.4 * k });
+          c.fillStyle = blink ? '#ffe646' : '#ff9424';
+          c.fillRect(x - 1, S4_PH_CEIL + 3, 3, 2 + Math.round(k * 3));
+          c.fillStyle = '#ff7a24';
+          c.fillRect(x, S4_PH_CEIL + 8 + ((e.t + x) % 9), 1, 2);
+        }
+      }
+      // ---- feather volley: the aim is locked, dotted rays show where the feathers will fly ----
+      if (e.st === 'volley' && e.stT > 26 && e.stT < 44 && P.alive) {
+        const n = S4_PH_CFG[e.seg].vol, ox = e.x - 30, oy = e.y - 8;
+        c.fillStyle = blink ? '#fff2b0' : '#ff9424';
+        for (let i = 0; i < n; i++) {
+          const a = e.aim + (n === 1 ? 0 : (i / (n - 1) - 0.5) * S4_PH_CFG[e.seg].spread);
+          for (let d = 14; d < 80; d += 11) c.fillRect(Math.round(ox + Math.cos(a) * d), Math.round(oy + Math.sin(a) * d), 1, 1);
+        }
+      }
+      // ---- volley / rain charge: sparks gather at the gem ----
+      if ((e.st === 'volley' && e.stT > 8 && e.stT < 42) || (e.st === 'perch' && e.stT < 4)) {
+        for (let i = 0; i < 3; i++) {
+          const a = e.t * 0.37 + i * 2.1, r = 22 - ((e.t + i * 5) % 14);
+          c.fillStyle = i === 1 ? '#fff2b0' : '#ffb83c';
+          c.fillRect(Math.round(e.x - 5 + Math.cos(a) * r), Math.round(e.y + 3 + Math.sin(a) * r), 1, 1);
+        }
+      }
+    },
+  };
+
   /* ground-anchored enemies (registered here so the forest leaves clearings around them).
    * Shooters keep away from the 300 px after every checkpoint (respawn = first seconds harmless). */
   ground(384, 'turret');
@@ -1663,7 +2575,7 @@
         for (const e of G.enemies) if (e.type === 's4_maiden' && !e.dead) e.mode = 'leave';
       });
 
-      S.boss(BOSS_X, 'bigcore', { level: 4 });
+      S.boss(BOSS_X, 's4_phoenix', {});
     },
   });
 })();

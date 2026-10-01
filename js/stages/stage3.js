@@ -12,7 +12,8 @@
  *           1690-2310 quarry cave (statues hang from the ceiling and stand on the floor)
  *           2330 checkpoint   2440-2880 Mother and Child levitating over her ahu
  *           3090-3230 small statue + the colossus   3330 checkpoint (3 capsule carriers follow)
- *           3700 Guardian Core (level 3) on a calm beach at twilight
+ *           3700 BOSS: TIDE COLOSSUS, a giant moai head bobbing in the surf of a calm beach at twilight
+ *                (its weak point, a stone in the throat, is only bare while the tide lifts the mouth out of the sea)
  * ============================================================= */
 (function stage3() {
   /* ---------- tiny helpers ---------- */
@@ -1496,6 +1497,1234 @@
   };
 
   /* =============================================================
+   * BOSS: TIDE COLOSSUS
+   * ============================================================= */
+  const S3C = {
+    HX: 214, // axis column of the head (screen x)
+    FLOOR: H - 34, // top of the beach in the arena (the water is clipped there)
+  };
+
+  // weathered grey-green stone (lit from the top left, a little warm: it is dusk)
+  S3_HEAD_PAL.tide = { out: '#0d1a1c', c: ['#1f3033', '#34504c', '#567266', '#82a082', '#b6c89a'] };
+
+  function s3_colArt() {
+    const PAL = S3_HEAD_PAL.tide;
+    const info = s3_buildHead({ h: 100, hat: 0, seed: 77, gem: 0, cracks: 0, moss: 3, noFade: 1, pal: 'tide' });
+    const W0 = info.w, H0 = info.h, my = info.mouth.y, ax = info.ax;
+    const ay = my + 19; // the entity's anchor row: the middle of the open throat (where the stone hangs)
+    const DROP = [0, 10, 36], HF = H0 + 50; // jaw drop per frame; every frame is as tall as the longest one plus a long underwater base
+    const img = info.art.getContext('2d').getImageData(0, 0, W0, H0);
+    const d = img.data;
+    const at = (x, y) => (y * W0 + x) * 4;
+    const inside = (x, y) => x >= 0 && x < W0 && y >= 0 && y < H0 && d[at(x, y) + 3] > 0;
+    const OUT = Sprites.toRgb(PAL.out);
+    const isOut = (x, y) => {
+      const i = at(x, y);
+      return d[i] === OUT[0] && d[i + 1] === OUT[1] && d[i + 2] === OUT[2];
+    };
+    /** tint a stone pixel (never the outline, never outside the silhouette) */
+    const paint = (x, y, hex, mix) => {
+      x = Math.round(x);
+      y = Math.round(y);
+      if (!inside(x, y) || isOut(x, y)) return false;
+      const c = Sprites.toRgb(hex), i = at(x, y), m = mix === undefined ? 1 : mix;
+      d[i] = d[i] + (c[0] - d[i]) * m;
+      d[i + 1] = d[i + 1] + (c[1] - d[i + 1]) * m;
+      d[i + 2] = d[i + 2] + (c[2] - d[i + 2]) * m;
+      return true;
+    };
+    const setpx = (x, y, hex) => {
+      if (x < 0 || x >= W0 || y < 0 || y >= H0) return;
+      const c = Sprites.toRgb(hex), i = at(x, y);
+      d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; d[i + 3] = 255;
+    };
+
+    /* ---- geometry of the silhouette (hit boxes are built from it) ---- */
+    const front = [], back = [];
+    for (let y = 0; y < H0; y++) {
+      let a = -1, b = -1;
+      for (let x = 0; x < W0; x++) {
+        if (d[at(x, y) + 3] > 0) {
+          if (a < 0) a = x;
+          b = x;
+        }
+      }
+      front.push(a);
+      back.push(b);
+    }
+    const bands = (y0, y1) => {
+      const out = [];
+      let cur = null;
+      for (let y = y0; y <= y1; y++) {
+        if (front[y] < 0) continue;
+        if (cur && (cur.y1 - cur.y0 >= 8 || Math.abs(front[y] - cur.f) > 3 || Math.abs(back[y] - cur.b) > 4)) {
+          out.push(cur);
+          cur = null;
+        }
+        if (!cur) cur = { y0: y, y1: y, x0: front[y], x1: back[y] + 1, f: front[y], b: back[y] };
+        else {
+          cur.y1 = y;
+          cur.x0 = Math.min(cur.x0, front[y]);
+          cur.x1 = Math.max(cur.x1, back[y] + 1);
+        }
+      }
+      if (cur) out.push(cur);
+      return out;
+    };
+    const box = (b) => ({ ox: (b.x0 + b.x1) / 2 - ax, oy: (b.y0 + b.y1 + 1) / 2 - ay, w: b.x1 - b.x0, h: b.y1 - b.y0 + 1 });
+
+    /* ---- hand-made details on top of the generated stone ---- */
+    // three carved tide lines across the forehead (they glow once the Colossus is hurt)
+    const glyph = [];
+    for (let k = 0; k < 3; k++) {
+      for (let x = 27; x <= 48; x++) {
+        const y = 6 + k * 4 + Math.round(1.4 * Math.sin((x - 27) * 0.7 + k * 1.2));
+        if (paint(x, y, '#10222a')) {
+          glyph.push([x, y]);
+          paint(x, y + 1, '#9bb8a0', 0.5);
+        }
+      }
+    }
+    // barnacles and a green waterline stain on everything that lives in the water
+    const rng = makeRng(404);
+    for (let tries = 0, n = 0; tries < 500 && n < 22; tries++) {
+      const x = 8 + Math.floor(rng() * 56), y = 66 + Math.floor(rng() * 32);
+      if (!inside(x, y) || isOut(x, y) || Math.abs(y - my) < 9) continue;
+      paint(x, y, '#dde4cc');
+      paint(x + 1, y, '#aebba2');
+      paint(x, y + 1, '#223a38');
+      paint(x + 1, y + 1, '#223a38');
+      if (rng() < 0.5) paint(x - 1, y, '#8e9e88');
+      n++;
+    }
+    for (let y = 80; y < H0; y++) {
+      for (let x = 0; x < W0; x++) {
+        const t = (y - 80) / 20;
+        if (S3_BAYER[(y & 3) * 4 + (x & 3)] < t * 0.85) paint(x, y, '#2a5a3c', 0.5);
+      }
+    }
+    // seaweed hanging from the chin
+    for (const [sx, sy, len] of [[14, 74, 13], [19, 77, 10], [25, 80, 9]]) {
+      for (let k = 0; k < len; k++) {
+        const x = sx + Math.round(1.3 * Math.sin(k * 0.9 + sx)), y = sy + k;
+        setpx(x, y, k % 4 === 3 ? '#8fae4a' : k % 2 ? '#2f6a3a' : '#1c4a2c');
+        if (k % 3 === 1) setpx(x + 1, y, '#1c4a2c');
+      }
+    }
+
+    /* ---- the head in three jaw states (closed / half / wide open) ---- */
+    const cx0 = info.mouth.x, cx1 = info.mouthX1;
+    const mix = (a, b, t) => {
+      const A = Sprites.toRgb(a), B = Sprites.toRgb(b);
+      return [A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t, A[2] + (B[2] - A[2]) * t];
+    };
+    const frames = [];
+    for (let f = 0; f < 3; f++) {
+      const dr = DROP[f];
+      const out = new ImageData(W0, HF);
+      const o = out.data;
+      for (let y = 0; y <= my; y++) o.set(d.subarray(at(0, y), at(0, y) + W0 * 4), y * W0 * 4);
+      for (let y = my + 1; y < H0; y++) o.set(d.subarray(at(0, y), at(0, y) + W0 * 4), (y + dr) * W0 * 4);
+      // the base continues straight down under the water (so the head never ends above the beach)
+      for (let y = H0 + dr; y < HF; y++) {
+        const k = y === HF - 1 ? 0 : 1 - 0.004 * (y - H0 - dr);
+        for (let x = 0; x < W0; x++) {
+          const s0 = at(x, H0 - 2), i = (y * W0 + x) * 4;
+          if (d[s0 + 3] === 0) continue;
+          o[i] = k === 0 ? OUT[0] : d[s0] * k;
+          o[i + 1] = k === 0 ? OUT[1] : d[s0 + 1] * k;
+          o[i + 2] = k === 0 ? OUT[2] : d[s0 + 2] * k;
+          o[i + 3] = 255;
+        }
+      }
+      for (let j = 0; j < dr; j++) {
+        const y = my + 1 + j;
+        for (let x = 0; x < W0; x++) {
+          const i = (y * W0 + x) * 4;
+          let c = null;
+          if (x >= cx0 && x <= cx1) {
+            // the cavity: black under the upper lip, a little water-light toward the lower lip
+            const t = dr > 1 ? j / (dr - 1) : 0;
+            c = mix('#04101a', '#0e3446', t * t);
+            if (x >= cx1 - 2) c = mix('#02080e', '#06202c', t);
+            if (j === dr - 1) c = x >= cx1 - 1 ? [2, 8, 14] : mix('#1c6a82', '#3aa8bc', ((x * 7) & 3) / 4);
+            if (j === 0) c = [4, 12, 18];
+          } else if (x > cx1 && inside(x, my - 2)) {
+            // the cheek simply stretches (darker toward the open jaw)
+            const s1 = at(x, my - 2), k = 0.8 - 0.32 * Math.min(1, j / 30);
+            c = [d[s1] * k, d[s1 + 1] * k, d[s1 + 2] * k];
+          }
+          if (c) {
+            o[i] = c[0]; o[i + 1] = c[1]; o[i + 2] = c[2]; o[i + 3] = 255;
+          }
+        }
+      }
+      const cv = Sprites.makeCanvas(W0, HF);
+      cv.getContext('2d').putImageData(out, 0, 0);
+      frames.push(cv);
+    }
+    Sprites.fromCanvases('s3_col_head', frames);
+
+    Sprites.painted('s3_col_none', 1, 1, 1, () => {}); // (the invisible bullets of the eye ray are drawn by the boss)
+
+    /* ---- crack overlays (stage 1: a few dark fissures, stage 2: wide open and glowing) ---- */
+    for (let lv = 1; lv <= 2; lv++) {
+      const cr = makeRng(900 + lv);
+      const p = new Sprites.Painter(W0, HF, {});
+      const n = lv === 1 ? 3 : 7;
+      for (let k = 0; k < n; k++) {
+        let x = 24 + Math.floor(cr() * 34), y = Math.floor(cr() * 8);
+        const len = 20 + Math.floor(cr() * 26);
+        let dx = cr() < 0.5 ? -1 : 1;
+        for (let s = 0; s < len; s++) {
+          if (y > my - 6) break;
+          if (inside(x, y) && !isOut(x, y)) {
+            p.px(x, y, '#081012');
+            if (lv === 2) {
+              p.px(x + 1, y, s % 3 === 0 ? '#a8f8ff' : '#2a96c8');
+              if (inside(x, y + 1) && !isOut(x, y + 1) && s % 2 === 0) p.px(x, y + 1, '#1c6a8c');
+            }
+          }
+          if (cr() < 0.62) y++;
+          else x += dx;
+          if (cr() < 0.2) dx = -dx;
+        }
+      }
+      Sprites.fromCanvases('s3_col_crk' + lv, [p.c]);
+    }
+
+    /* ---- the topknot (pukao): red scoria cylinder, 4 states: whole / cracked / chipped / (gone is simply not drawn) ---- */
+    const HP = { a: '#3a1a16', b: '#64302a', c: '#8e4a38', d: '#b8684a', e: '#dc906a', k: '#1e0f0a', g: '#4a7a2c', G: '#8fae4a', t: '#48ecf4', T: '#a8f8ff' };
+    Sprites.painted('s3_col_hat', 52, 26, 3, (p, f) => {
+      // cylinder body with a slightly narrower top, lit from the left
+      for (let y = 3; y <= 24; y++) {
+        const inset = y < 6 ? 6 - y : 0;
+        const x0 = 2 + inset, x1 = 49 - inset;
+        for (let x = x0; x <= x1; x++) {
+          const u = (x - 2) / 47;
+          const th = [0.2, 0.42, 0.7, 0.88], nm = ['e', 'd', 'c', 'b', 'a'];
+          let k = 0;
+          while (k < 4 && u >= th[k]) k++;
+          let col = nm[k];
+          if ((x + y) & 1) {
+            if (k < 4 && th[k] - u < 0.03) col = nm[k + 1];
+            else if (k > 0 && u - th[k - 1] < 0.03) col = nm[k - 1];
+          }
+          p.px(x, y, col);
+        }
+      }
+      // top face
+      p.ellipse(26, 4.5, 21.5, 2.6, 'd');
+      p.ellipse(25, 4.2, 18, 1.8, 'e');
+      p.hline(8, 44, 3, 'e');
+      // fluting + shadow under the overhang
+      for (const x of [10, 19, 28, 37, 44]) p.vline(x, 7, 20, x < 20 ? 'c' : 'b');
+      p.rect(2, 22, 48, 3, 'a');
+      p.hline(2, 49, 22, 'b');
+      p.hline(4, 47, 25, 'k');
+      // moss tufts on the lit top edge
+      for (const [mx, my2] of [[9, 4], [10, 5], [11, 4], [13, 5], [34, 4], [35, 5]]) p.px(mx, my2, (mx + my2) & 1 ? 'g' : 'G');
+      if (f >= 1) {
+        // a long fissure from the top rim down through the body
+        let x = 31;
+        for (let y = 3; y <= 23; y++) {
+          p.px(x, y, 'k');
+          if (f === 2 || y % 2) p.px(x + 1, y, f === 2 ? 't' : 'a');
+          if (y % 5 === 2) x += y % 10 === 2 ? 1 : -1;
+        }
+        p.line(18, 9, 24, 14, 'k');
+        p.line(24, 14, 22, 20, 'k');
+      }
+      if (f === 2) {
+        // a chunk is missing at the top right
+        for (let y = 2; y <= 12; y++) for (let x = 36 + Math.floor((y - 2) * 0.6); x <= 52; x++) p.erase(x, y);
+        p.line(36, 2, 42, 8, 'k');
+        p.line(42, 8, 40, 12, 'k');
+        p.line(40, 12, 50, 12, 'k');
+        for (let x = 42; x < 49; x++) p.px(x, 13, 'b');
+        p.px(45, 13, 't');
+        p.px(47, 13, 'T');
+        p.line(12, 5, 14, 12, 'k');
+        p.px(13, 8, 't');
+      }
+      p.outline('k');
+    }, { pal: HP });
+
+    /* ---- the tide stone: a tall gold crystal that fills the throat (4 frames: a glint slides down its left facet) ---- */
+    Sprites.painted('s3_col_stone', 15, 34, 4, (p, f) => {
+      const hex = (i) => [[7, i], [14 - i, 6 + i], [14 - i, 27 - i], [7, 33 - i], [i, 27 - i], [i, 6 + i]];
+      p.poly(hex(0), 'O');
+      p.poly(hex(1), 'o');
+      p.poly(hex(2.5), 'y');
+      p.poly([[7, 3], [7, 30], [3, 25], [3, 9]], 'h'); // lit left facet
+      p.poly([[7, 3], [12, 9], [12, 25], [7, 30]], 'o'); // shaded right facet
+      p.vline(7, 4, 29, 'w'); // ridge
+      for (const y of [8, 14, 21]) p.px(10, y + ((f + y) & 1), 'Y'); // flaws inside
+      const gy = 5 + f * 6;
+      p.px(4, gy, 'w');
+      p.px(4, gy + 1, 'w');
+      p.px(5, gy + 1, 'w');
+      p.px(5, gy + 2, 'h');
+      p.outline('k');
+    });
+
+    /* ---- falling rubble from the cracked topknot ---- */
+    for (let f = 0; f < 2; f++) {
+      Sprites.painted('s3_col_rock' + f, 9, 9, 1, (p) => {
+        const pts = f ? [[1, 4], [3, 0], [7, 1], [8, 5], [5, 8], [1, 7]] : [[0, 3], [4, 0], [8, 2], [7, 7], [3, 8], [1, 6]];
+        p.poly(pts, 'c');
+        p.poly(pts.map(([x, y]) => [x * 0.8 + 1.6, y * 0.8 + 1.6]), 'b');
+        p.line(pts[0][0] + 1, pts[0][1] + 1, pts[1][0] + 1, pts[1][1] + 1, 'e');
+        p.px(3, 3, 'd');
+        p.px(4, 3, 'e');
+        p.px(6, 5, 'a');
+        p.px(5, 6, 'a');
+        p.outline('k');
+      }, { pal: { a: '#2a3c3c', b: '#567266', c: '#82a082', d: '#b6c89a', e: '#d8e4b8', k: '#0d1a1c' } });
+    }
+
+    /* ---- the surge: a breaking wave with a curling, foaming lip; a see-through dithered body, bright cyan/white (ion water: it hurts, like the rings) ---- */
+    Sprites.painted('s3_col_wave', 34, 70, 4, (p, f) => {
+      for (let y = 0; y < 70; y++) {
+        const u = y / 69;
+        const lip = y < 16 ? Math.sin((y / 16) * Math.PI) : 0; // the hook overhangs to the left
+        const xl = Math.round(7 - 6.2 * lip - 4 * Math.max(0, u - 0.25));
+        const xr = Math.round(15 + 18 * Math.pow(u, 0.9));
+        for (let x = Math.max(0, xl); x <= Math.min(33, xr); x++) {
+          const depth = (y - 2) / 60 + (x - xl) / 40;
+          const edge = x - xl < 3 || xr - x < 2 || y < 13;
+          if (!edge && depth > 0.2 && (x + y + f) % (u > 0.6 ? 2 : 3) === 0) continue; // holes: the sea shows through
+          let col = depth < 0.1 ? 'w' : depth < 0.3 ? 'c' : depth < 0.6 ? 'C' : 'b';
+          if (((x + y + f * 2) & 3) === 0 && depth > 0.15) col = depth < 0.45 ? 'c' : 'C';
+          p.px(x, y, col);
+        }
+        if (y < 16) for (let x = Math.max(0, xl); x <= xl + 2 + ((y + f) & 1); x++) p.px(x, y, 'w'); // the foaming lip
+      }
+      // spray flying off the crest and foam streaks on the face
+      for (let k = 0; k < 6; k++) {
+        const sx = 1 + ((k * 4 + f * 3) % 11), sy = 1 + ((k * 3 + f * 2) % 7);
+        p.px(sx, sy, k & 1 ? 'w' : 'c');
+      }
+      for (let k = 0; k < 10; k++) {
+        const fx = 4 + ((k * 5 + f * 3) % 18), fy = 14 + ((k * 7 + f * 5) % 54);
+        p.px(fx, fy, 'w');
+        if (k % 2) p.px(fx + 1, fy, 'c');
+      }
+      p.outline('B');
+    });
+
+    /* geometry used by the entity */
+    const upper = bands(0, my), lower = bands(my + 1, H0 - 1);
+    return {
+      w: W0, h: HF, h0: H0, ax, my, ay, drop: DROP,
+      glyph,
+      eyeFar: { ox: info.eyes[1].x - ax, oy: info.eyes[1].y - ay },
+      eyeNear: { ox: info.eyes[0].x - ax, oy: info.eyes[0].y - ay },
+      lip: { x0: cx0, x1: cx1 },
+      front, back,
+      upper: upper.map(box),
+      lower: lower.map(box),
+      // cavity back wall / cheek: rows the jaw opens up (height is set from the jaw state)
+      cheek: { ox: (cx1 + 1 + back[my] + 1) / 2 - ax, w: back[my] + 1 - (cx1 + 1), top: my + 1 - ay }, // (top: first row below the upper lip)
+      stone: { ox: cx1 - 9 - ax, oy: 0 }, // centre of the glowing throat (cavity rows my+1 .. my+36)
+      mouthOx: cx0 - 7 - ax, mouthOy: 0,
+      hat: { ox: 0, oy: -22 + 13 - ay, w: 48, h: 26 },
+    };
+  }
+  const S3_COLA = s3_colArt();
+
+
+  /* =============================================================
+   * THE TIDE IS THE CLOCK.
+   *  The head bobs in the surf on a slow tide (it rises, lingers high, sinks, lingers low).  Where its mouth is relative to
+   *  the water line decides everything:
+   *    risen  the jaw drops, the sea drains out of the throat and the tide stone in it is bare: the only weak point.
+   *           The open mouth spits shootable ion rings.
+   *    sunk   the water closes over the mouth and the stone is covered; the eyes burn instead: eye rays and a breaking wave.
+   *  Phase 1  slow tide, ring fans, one sweeping eye ray.
+   *  Phase 2  (stone below 73 %) the Colossus dives and resurfaces with a cracked topknot: faster tide, eye rays that sweep
+   *           there and back, breaking waves, rubble raining from the topknot.
+   *  Phase 3  (stone below 46 %) it dives again, the topknot falls off and the tide goes OUT: the head stands high and dry,
+   *           the stone stays bare and the mouth rakes the arena with ring spirals (the rays and the rubble return).
+   * ============================================================= */
+  /**
+   * The tide: the head rises (15 % of the cycle), dwells high (50 %), sinks (15 %) and stays low (20 %): +1 risen .. -1 sunk.
+   * Phase 3 (the tide is out) only heaves gently.
+   */
+  function s3_tide(u, ph) {
+    if (ph === 3) return Math.sin(u);
+    let c = (u / TAU) % 1;
+    if (c < 0) c += 1;
+    if (c < 0.15) return -1 + 2 * s3_ease(c / 0.15);
+    if (c < 0.65) return 1;
+    if (c < 0.8) return 1 - 2 * s3_ease((c - 0.65) / 0.15);
+    return -1;
+  }
+  const s3_ease = (u) => (u <= 0 ? 0 : u >= 1 ? 1 : u * u * (3 - 2 * u));
+  const s3_out = (u) => 1 - Math.pow(1 - clamp(u, 0, 1), 3);
+  const S3_DEEP = 175; // depth of the hidden head (the whole sprite is below the beach line)
+  const S3_PH = [
+    null,
+    { per: 450, mid: 145, amp: 18, wl: 145, gate: 0.73, gap: 44 },
+    { per: 390, mid: 145, amp: 18, wl: 145, gate: 0.46, gap: 36 },
+    { per: 330, mid: 140, amp: 6, wl: 162, gate: 0, gap: 28 },
+  ];
+  // attack programme per phase: each window of the tide takes the next entry that suits it (up: mouth clear of the sea, down: covered)
+  const S3_PROG = [
+    null,
+    [['fan3', 'up'], ['seq3', 'up'], ['sweep', 'down']],
+    [['fan5', 'up'], ['rain', 'up'], ['surge', 'down'], ['scan', 'down']],
+    [['spiral', 'any'], ['scan', 'any'], ['rain', 'any'], ['seq5', 'any'], ['spiral', 'any'], ['scan', 'any']],
+  ];
+  const S3_TEL = 44; // beam / rubble telegraph (frames)
+  const S3_NB = 21; // lethal boxes along the eye ray
+
+  /** water surface (screen y) at column x */
+  function s3_colSurface(v, x) {
+    const dx = x - S3C.HX;
+    const swell = (5 + 7 * (v.sg || 0)) * Math.exp(-(dx * dx) / 2200) * v.sw;
+    const wav = (Math.sin(x * 0.11 - v.t * 0.07) * 1.1 + Math.sin(x * 0.043 + v.t * 0.031) * 0.9) * v.sw;
+    return v.wl - swell * (0.7 + 0.3 * Math.sin(v.t * 0.05)) + wav;
+  }
+
+  // a few drifting ripple dashes in the pool
+  const S3_RIP = (() => {
+    const r = makeRng(77);
+    return Array.from({ length: 46 }, () => ({ r: 4 + Math.floor(r() * 34), x0: r() * 140, len: 3 + Math.floor(r() * 7), sp: 0.12 + r() * 0.35, lt: r() < 0.6 }));
+  })();
+
+  /** the pool of surf around the Colossus: translucent water over the lower head, a wavy skin, ripples, foam */
+  function s3_colWater(c, v) {
+    const k = v.sw;
+    if (k < 0.02) return;
+    const A = S3_COLA, FL = S3C.FLOOR, xL = S3C.HX - 124;
+    c.save();
+    for (let x = xL; x < W; x++) {
+      const a = Math.min(1, (x - xL) / 34) * k;
+      const top = Math.round(s3_colSurface(v, x));
+      c.globalAlpha = a * 0.55;
+      c.fillStyle = '#86eef0';
+      c.fillRect(x, top, 1, 2);
+      c.globalAlpha = a * 0.48;
+      c.fillStyle = '#2a9ab8';
+      c.fillRect(x, top + 2, 1, 15);
+      c.globalAlpha = a * 0.6;
+      c.fillStyle = '#143c7a';
+      c.fillRect(x, top + 17, 1, Math.max(0, Math.min(16, FL - top - 17)));
+      c.globalAlpha = a * 0.8;
+      c.fillStyle = '#0c2458';
+      c.fillRect(x, top + 33, 1, Math.max(0, FL - top - 33));
+    }
+    const span = W - xL;
+    for (const q of S3_RIP) {
+      const x = xL + ((((q.x0 - v.t * q.sp * (q.lt ? 1 : -0.6)) % span) + span) % span);
+      const y = Math.round(s3_colSurface(v, x) + q.r);
+      if (y > FL - 2) continue;
+      c.globalAlpha = Math.min(1, (x - xL) / 34) * k * (q.lt ? 0.55 : 0.5);
+      c.fillStyle = q.lt ? '#d8ffff' : '#0a1c58';
+      c.fillRect(Math.round(x), y, q.len, 1);
+    }
+    // foam: a broken white line on the skin
+    for (let x = xL; x < W; x++) {
+      const h = s3_hash(x * 31 + (v.t >> 3) * 7);
+      if (h < 0.55) {
+        c.globalAlpha = Math.min(1, (x - xL) / 34) * k * 0.95;
+        c.fillStyle = h < 0.2 ? '#ffffff' : '#bff8ff';
+        c.fillRect(x, Math.round(s3_colSurface(v, x)) - 1, 1, 1);
+      }
+    }
+    // whitecaps hugging the head where it pierces the surface
+    const top = v.y - A.ay;
+    if (!v.nocap && top < v.wl - 2 && top + A.front.length > v.wl) {
+      const row = clamp(Math.round(v.wl - top), 0, A.front.length - 1);
+      for (const [ex, dir] of [[v.x - A.ax + A.front[row], -1], [v.x - A.ax + A.back[row] + 1, 1]]) {
+        for (let i = 0; i < 9; i++) {
+          const w = 1 + ((i * 3 + (v.t >> 2)) % 4);
+          const x = Math.round(ex + dir * (i * 1.4 - 2)) - (dir < 0 ? w : 0);
+          const y = Math.round(s3_colSurface(v, ex)) - 1 - (i % 3 === 0 ? 1 : 0);
+          c.globalAlpha = k * (0.95 - i * 0.07);
+          c.fillStyle = i % 2 ? '#e8ffff' : '#ffffff';
+          c.fillRect(x, y, w, 2);
+        }
+      }
+    }
+    // expanding ripple rings (the head is diving / surfacing)
+    for (const q of v.rip || []) {
+      const rx = 5 + q.t * 1.15, ry = rx * 0.2, n = Math.min(44, 12 + Math.floor(rx * 0.8));
+      c.fillStyle = '#e8ffff';
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * TAU, y = Math.round(s3_colSurface(v, q.x) + 2 + Math.sin(a) * ry), x = Math.round(q.x + Math.cos(a) * rx);
+        if (x < xL + 6 || x >= W || (i + (q.t >> 1)) % 3 === 0) continue;
+        c.globalAlpha = Math.max(0, 0.9 - q.t / 56) * k;
+        c.fillRect(x, y, 2, 1);
+      }
+    }
+    c.restore();
+  }
+
+  /** draws the Colossus (alive or as a wreck) from a plain view object */
+  function s3_colDraw(c, v) {
+    const A = S3_COLA, FL = S3C.FLOOR;
+    const hx = Math.round(v.x + (v.jx || 0)), hy = Math.round(v.y + (v.jy || 0));
+    const sx = hx - A.ax, sy = hy - A.ay;
+    const t = v.t;
+    c.save();
+    c.beginPath();
+    c.rect(0, 0, W, FL);
+    c.clip();
+    Sprites.drawTL(c, 's3_col_head', sx, sy, { frame: v.jaw });
+    if (v.glow > 0) {
+      c.globalAlpha = v.glow * (0.55 + 0.3 * Math.sin(t * 0.09));
+      c.fillStyle = '#48ecf4';
+      for (const [gx, gy] of A.glyph) c.fillRect(sx + gx, sy + gy, 1, 1);
+      c.globalAlpha = 1;
+    }
+    if (v.crack > 0) {
+      c.globalAlpha = v.crack === 2 ? 0.8 + 0.2 * Math.sin(t * 0.1) : 1;
+      Sprites.drawTL(c, 's3_col_crk' + v.crack, sx, sy);
+      c.globalAlpha = 1;
+    }
+    // eyes: a dim teal slit while calm, white-hot while a beam charges
+    const en = A.eyeNear, ef = A.eyeFar, ex = hx + en.ox, ey = hy + en.oy, fx = hx + ef.ox, fy = hy + ef.oy;
+    c.fillStyle = '#48ecf4';
+    c.globalAlpha = Math.max(0.3 + 0.12 * Math.sin(t * 0.07), v.eye * 0.5);
+    c.fillRect(ex - 5, ey - 1, 10, 3);
+    c.fillRect(fx - 1, fy - 1, 3, 2);
+    if (v.eye > 0.02) {
+      c.globalAlpha = v.eye;
+      c.fillStyle = '#e8ffff';
+      c.fillRect(ex - 4, ey, 8, 1);
+      c.fillRect(ex - 2, ey - 1, 4, 3);
+      c.fillRect(fx - 1, fy - 1, 3, 2);
+      c.globalAlpha = v.eye * 0.35;
+      c.fillStyle = '#48ecf4';
+      c.fillRect(ex - 9, ey - 4, 18, 9);
+      c.fillRect(fx - 4, fy - 3, 9, 6);
+    }
+    c.globalAlpha = 1;
+    // mouth: cyan charge glow at the front of the cavity
+    if (v.jaw === 2 && v.mg > 0.02) {
+      const gx = sx + A.lip.x0 + 1, gy = sy + A.my + 8;
+      c.fillStyle = '#48ecf4';
+      c.globalAlpha = 0.2 + 0.5 * v.mg;
+      c.fillRect(gx, gy, 6 + Math.round(8 * v.mg), 22);
+      c.globalAlpha = 0.5 + 0.5 * v.mg;
+      c.fillStyle = '#e8ffff';
+      c.fillRect(gx, gy + 8, 2 + Math.round(4 * v.mg), 6);
+      c.globalAlpha = 1;
+    }
+    // the stone (only while the jaw is wide open): the whole throat glows while it can be hurt, and a bracket marks it
+    if (v.jaw === 2 && v.stone > 0) {
+      const px = Math.round(hx + A.stone.ox), py = Math.round(hy + A.stone.oy);
+      if (v.stone === 2) {
+        const gt = hy - 16, gh = Math.max(2, Math.round(v.sbh));
+        c.fillStyle = '#ff9424';
+        c.globalAlpha = 0.3 + 0.1 * Math.sin(t * 0.12);
+        c.fillRect(px - 8, gt, 17, gh);
+        c.fillStyle = '#ffe646';
+        c.globalAlpha = 0.28;
+        c.fillRect(px - 5, gt + 2, 11, Math.max(1, gh - 4));
+        c.globalAlpha = 1;
+        const r = 10 + ((t >> 3) & 1), by0 = gt + gh / 2;
+        c.fillStyle = (t >> 4) & 1 || G.reduceFlash ? '#ffe646' : '#ffffff';
+        for (const sgx of [-1, 1]) {
+          for (const sgy of [-1, 1]) {
+            const cx = px + sgx * r, cy = Math.round(by0 + sgy * (gh / 2 + 2 + ((t >> 3) & 1)));
+            c.fillRect(sgx > 0 ? cx - 2 : cx, cy, 3, 1);
+            c.fillRect(cx, sgy > 0 ? cy - 2 : cy, 1, 3);
+          }
+        }
+      } else c.globalAlpha = 0.55;
+      Sprites.draw(c, 's3_col_stone', px, py, { frame: (t >> 3) & 3, flash: v.sflash > 0 });
+      c.globalAlpha = 1;
+    }
+    if (v.hat < 3) Sprites.drawTL(c, 's3_col_hat', hx - 25 + (v.hx || 0), sy - 22, { frame: v.hat });
+    c.restore();
+    s3_colWater(c, v);
+  }
+
+  /** eye-ray and rubble telegraphs / the beams themselves (drawn over the water) */
+  function s3_colBeamFx(c, e) {
+    const a = e.at, FL = S3C.FLOOR;
+    if (!a) return;
+    const t = a.t;
+    if (a.n === 'rain' && t < S3_TEL) {
+      for (const x of a.cols) {
+        // cracks of light at the top edge and dust trickling down the column where the rubble will fall
+        c.fillStyle = G.reduceFlash || (t >> 3) & 1 ? '#e8f4c8' : '#b6c89a';
+        c.fillRect(x - 4, 0, 9, 2);
+        c.fillRect(x - 2, 2, 5, 1);
+        for (let k = 0; k < 5; k++) {
+          const h = s3_hash(x * 7 + k * 13);
+          c.fillStyle = k & 1 ? '#82a082' : '#d4e2b8';
+          c.fillRect(x - 3 + Math.floor(h * 7), 3 + ((t * (1.2 + h * 0.5) + k * 11) % 34), 1, 2 + (k & 1));
+        }
+      }
+      return;
+    }
+    if ((a.n !== 'sweep' && a.n !== 'scan') || t >= S3_TEL + a.T * a.legs + 6) return;
+    const [ox, oy] = s3_colEye(e);
+    const L = ox - 6, ta = Math.tan(s3_colAng(e, a, 0)), tb = Math.tan(s3_colAng(e, a, 1));
+    c.save();
+    c.beginPath();
+    c.rect(0, 0, W, FL);
+    c.clip();
+    // the danger wedge
+    c.globalAlpha = t < S3_TEL ? 0.17 + 0.05 * Math.sin(t * 0.3) : 0.09;
+    c.fillStyle = '#48ecf4';
+    c.beginPath();
+    c.moveTo(ox - 4, oy);
+    c.lineTo(0, oy + ta * ox);
+    c.lineTo(0, oy + tb * ox);
+    c.closePath();
+    c.fill();
+    c.globalAlpha = 1;
+    if (t < S3_TEL) {
+      // dotted edges: the row the ray starts on is bright and blinks slowly, the row it ends on is dim
+      for (const [tn, start] of [[ta, true], [tb, false]]) {
+        c.fillStyle = start ? (G.reduceFlash || (t >> 3) & 1 ? '#ffe646' : '#ffffff') : '#a8903a';
+        for (let x = L; x > 2; x -= 5) {
+          const y = Math.round(oy + tn * (ox - x));
+          if (y < FL - 1) c.fillRect(Math.round(x), y, 2, 1);
+        }
+      }
+    } else {
+      const ang = s3_colAng(e, a, a.u), tn = Math.tan(ang), th = clamp((t - S3_TEL) / 8, 0, 1), fade = t > S3_TEL + a.T * a.legs ? 0.4 : 1;
+      const half = Math.max(1, Math.round(2.4 * th * fade));
+      for (let x = Math.round(ox) - 6; x >= 0; x--) {
+        const y = Math.round(oy + (ox - x) * tn);
+        if (y > FL - 1) break;
+        c.fillStyle = '#1a46b4';
+        c.fillRect(x, y - half - 1, 1, half * 2 + 3);
+        c.fillStyle = '#48ecf4';
+        c.fillRect(x, y - half, 1, half * 2 + 1);
+        c.fillStyle = (x + t) % 7 < 3 ? '#ffffff' : '#c8ffff';
+        c.fillRect(x, y, 1, 1 + (half > 1 ? 1 : 0));
+      }
+      c.fillStyle = '#ffffff';
+      c.fillRect(Math.round(ox) - 7, Math.round(oy) - 2, 4, 5);
+    }
+    c.restore();
+  }
+
+  /* ---------- attacks ---------- */
+  function s3_colRing(x, y, ang, spd) {
+    return G.ebullet(x, y, Math.cos(ang) * spd, Math.sin(ang) * spd, { spr: 's3_ring', w: 8, h: 8, hp: 1, anim: 5, quiet: true });
+  }
+  const s3_colMouth = (e) => [e.x + S3_COLA.mouthOx, e.y + S3_COLA.mouthOy];
+  const s3_colEye = (e) => [e.x + S3_COLA.eyeFar.ox, e.y + S3_COLA.eyeFar.oy];
+
+  /**
+   * Angle (radians below horizontal) of the eye ray at progress u (0..legs): the ray is the line from the eye through the point
+   * (a.px, y) where y runs from the start row to the end row (and back, for a scan).  Aimed at where the ship was when the
+   * telegraph began, so it always sweeps THROUGH the ship's lane.
+   */
+  function s3_colAng(e, a, u) {
+    const [ox, oy] = s3_colEye(e);
+    u = clamp(u, 0, a.legs);
+    const y = u <= 1 ? a.y0 + (a.y1 - a.y0) * u : a.y1 + (a.y0 - a.y1) * (u - 1);
+    return Math.atan2(y - oy, Math.max(20, ox - a.px));
+  }
+
+  /**
+   * The lethal eye ray: a row of invisible bullets glued to the beam (the picture is drawn separately, smoothly).  Bullets
+   * rather than part boxes, because bullets carry a velocity that the shield logic and any look-ahead dodging understand.
+   * Angle: radians below horizontal, the ray points left.
+   * The beam never turns lethal ON the ship: a bullet that is created or swept onto it, or that sits next to it while a shield
+   * has just taken a hit (`e.hold`), stays harmless until the beam has moved on; and a whole crossing costs a shield one hit.
+   */
+  function s3_colRay(e, on, ang, angNext, th) {
+    const [ox, oy] = s3_colEye(e), tn = Math.tan(ang), tn1 = Math.tan(angNext), P = G.player;
+    let shieldHits = 0;
+    for (let i = 0; i < S3_NB; i++) {
+      const x = ox - 9 - i * 10, y = oy + (ox - x) * tn;
+      let b = e.rb[i];
+      if (!on || x < -2 || y > S3C.FLOOR - 1) {
+        if (b) b.dead = true;
+        e.rb[i] = null;
+        continue;
+      }
+      if (!b || b.dead) {
+        b = e.rb[i] = G.ebullet(x, y, 0, 0, { spr: 's3_col_none', w: 12, h: 7, solid: false, quiet: true, raw: true, life: 99999 });
+        if (!b) continue;
+        b.harmless = true; // armed below as soon as it is clear of the ship
+      }
+      const vy = (ox - x) * (tn1 - tn) + (e.y - e.py);
+      b.vx = 0;
+      b.vy = vy;
+      b.x = x;
+      b.y = y - vy; // the engine adds vy right after this update: the bullet ends the frame exactly on the ray
+      b.h = 3 + 4 * th;
+      if (e.hold > 0 && Math.abs(x - P.x) < 40) b.harmless = true;
+      else if (b.harmless && !overlap(P.x, P.y, 14, 10, x, y, 12, b.h)) b.harmless = false; // (the ship's hit box plus a margin)
+      if (!b.harmless && P.shield > 0 && overlap(P.x + 18, P.y, 9, 25, x, y, 12, b.h) && ++shieldHits > 1) b.harmless = true;
+    }
+  }
+
+  /** true when the stone will be bare `dt` frames from now */
+  function s3_colBareAt(e, dt) {
+    const tp = e.tp + (dt * TAU) / S3_PH[e.ph].per;
+    return e.mid - s3_tide(tp, e.ph) * e.amp <= e.wl + 4;
+  }
+
+  function s3_colBegin(e, n) {
+    const P = G.player, a = (e.at = { n, t: 0 });
+    if (n === 'sweep' || n === 'scan') {
+      // The ray starts on a row well BEHIND the ship (in the direction where there is more room) and sweeps through its lane
+      // and a bit beyond: go with the beam, or step out of the dotted wedge during the telegraph.  A scan sweeps there and back.
+      a.px = clamp(P.x, 24, 150);
+      a.dir = 184 - P.y >= P.y - 14 ? 1 : -1; // +1: the ray comes down from above and herds the ship down
+      const back = n === 'scan' ? 46 : 52, past = n === 'scan' ? 24 : 28, spd = n === 'scan' ? 0.95 : 0.85;
+      a.y0 = Math.min(186, P.y - a.dir * back);
+      a.y1 = P.y + a.dir * past;
+      a.legs = n === 'scan' ? 2 : 1;
+      a.T = Math.round(Math.abs(a.y1 - a.y0) / spd);
+      a.u = 0;
+      sfx('electric');
+    } else if (n === 'rain') {
+      // columns of rubble every 19 px with two gaps: one near the ship (but not on it), one far away
+      const g1 = clamp(P.x + rnd(-34, 34), 40, 150);
+      let g2 = rnd(28, 160);
+      for (let k = 0; k < 8 && Math.abs(g2 - g1) < 80; k++) g2 = rnd(28, 160);
+      a.cols = [];
+      for (let x = 16; x <= 168; x += 19) if (Math.abs(x - g1) > 25 && Math.abs(x - g2) > 25) a.cols.push(x);
+      sfx('stomp');
+      e.shk = 40;
+    } else if (n === 'surge') {
+      sfx('eruption');
+    } else if (n === 'spiral') {
+      sfx('tentacle');
+    }
+  }
+
+  /** one frame of the running attack; returns true when it is over */
+  function s3_colAtk(e, P) {
+    const a = e.at;
+    a.t++;
+    const t = a.t;
+    switch (a.n) {
+      case 'fan3':
+      case 'fan5':
+      case 'seq3':
+      case 'seq5': {
+        const seq = a.n[0] === 's', cnt = +a.n[3], gap = cnt === 3 ? 15 : 11, T = 34;
+        e.mg = Math.min(1, t / T);
+        if (t === 4) sfx('electric');
+        const k = seq ? (t - T) / gap : 0;
+        if (t >= T && (seq ? Number.isInteger(k) && k < cnt : t === T)) {
+          const [mx, my] = s3_colMouth(e);
+          const a0 = s3_headAim(mx, my, 0.55);
+          sfx('ring');
+          e.rc = 5;
+          if (seq) s3_colRing(mx, my, a0 + rnd(-0.05, 0.05), 1.28);
+          else for (let i = 0; i < cnt; i++) s3_colRing(mx, my, a0 + (i - (cnt - 1) / 2) * (cnt === 3 ? 0.37 : 0.27), cnt === 3 ? 1.2 : 1.15);
+        }
+        if (t >= T + (seq ? cnt * gap : 10)) {
+          e.mg = 0;
+          return true;
+        }
+        break;
+      }
+      case 'sweep':
+      case 'scan': {
+        e.eye = Math.min(1, t / (S3_TEL - 8));
+        a.u = (t - S3_TEL) / a.T;
+        if (t === S3_TEL) sfx('bossLaser');
+        const on = t >= S3_TEL && t < S3_TEL + a.T * a.legs;
+        s3_colRay(e, on, s3_colAng(e, a, a.u), s3_colAng(e, a, a.u + 1 / a.T), clamp((t - S3_TEL) / 8, 0, 1));
+        if (t >= S3_TEL + a.T * a.legs + 6) {
+          s3_colEnd(e);
+          return true;
+        }
+        break;
+      }
+      case 'rain': {
+        if (t === S3_TEL) {
+          sfx('stomp');
+          a.cols.forEach((x, i) => G.ebullet(x, -6, 0, 1.5, { spr: 's3_col_rock' + (i & 1), w: 7, h: 7, anim: 0, quiet: true }));
+          if (e.ph === 3) {
+            G.later(34, () => {
+              if (!e.dead && P.alive) a.cols.forEach((x, i) => G.ebullet(x + 10, -6, 0, 1.5, { spr: 's3_col_rock' + ((i + 1) & 1), w: 7, h: 7, anim: 0, quiet: true }));
+            });
+          }
+        }
+        if (t >= S3_TEL + 8) return true;
+        break;
+      }
+      case 'surge': {
+        const two = e.stone.hp < e.stone.max * 0.5;
+        e.sg = Math.min(1, t / 40);
+        if (t === 40 || (two && t === 96)) {
+          sfx('eruption');
+          const y0 = e.wl - 5;
+          const b = G.ebullet(S3C.HX - 52, y0, -1.35, 0, { spr: 's3_col_wave', w: 20, h: 56, anim: 5, solid: false, quiet: true });
+          if (b) {
+            // it never starts on top of the ship: harmless until it has cleared it
+            b.harmless = overlap(P.x, P.y, 20, 14, b.x, b.y, 24, 60);
+            b.custom = (q) => {
+              q.y = y0 + Math.sin(q.t * 0.1) * 1.6;
+              if (q.harmless && !overlap(G.player.x, G.player.y, 20, 14, q.x, q.y, 24, 60)) q.harmless = false;
+            };
+          }
+        }
+        if (t >= (two ? 104 : 54)) return true;
+        break;
+      }
+      case 'spiral': {
+        const T = 40;
+        e.mg = Math.min(1, t / T);
+        if (t === T) a.base = s3_headAim(...s3_colMouth(e), 0.3);
+        const s = t - T;
+        if (s >= 0 && s < 108) {
+          const [mx, my] = s3_colMouth(e);
+          if (s % 9 === 0) {
+            s3_colRing(mx, my, a.base + 0.5 * Math.sin((s / 108) * TAU), 1.12);
+            if (s % 27 === 0) sfx('ring');
+            e.rc = 3;
+          }
+          if (s % 18 === 9) s3_colRing(mx, my, a.base - 0.5 * Math.sin(((s - 9) / 108) * TAU), 1.12);
+        }
+        if (s >= 118) {
+          e.mg = 0;
+          return true;
+        }
+        break;
+      }
+      default:
+        return true;
+    }
+    return false;
+  }
+
+  /** stop the running attack and switch the ray off */
+  function s3_colEnd(e) {
+    e.at = null;
+    e.eye = 0;
+    e.mg = 0;
+    for (const b of e.rb) if (b) b.dead = true;
+    e.rb.length = 0;
+  }
+
+
+  /* ---------- the entity ---------- */
+  const S3_HP = 200; // stone health at normal difficulty (scaled by difficulty and loop like every boss)
+  const S3_TP0 = 0.75; // tide phase at the start of every phase: the head has just risen and the jaw has dropped
+
+  /** the head is only solid (shots deflect, touching kills) while it is up and fighting; submerged or surfacing it is a picture */
+  const s3_colArm = (e, on) => {
+    for (const p of e.parts) p.dead = !on || (p === e.hatP && e.hat === 3);
+    e.armed = on;
+  };
+
+  /** spray at the places where the head pierces the water, bubbles while it is below the surface */
+  function s3_colFx(e) {
+    const A = S3_COLA, sp = e.spray;
+    const surf = s3_colSurface(e, e.x - 30);
+    const hy = e.y + e.sink, top = hy - A.ay;
+    if (e.st !== 'under' && top < e.wl - 2 && top + A.front.length > e.wl && e.sw > 0.5) {
+      const mv = Math.abs(hy - (e.py + e.psink));
+      const n = mv > 0.25 ? 2 : e.t % 7 === 0 ? 1 : 0;
+      const row = clamp(Math.round(e.wl - top), 0, A.front.length - 1);
+      for (let i = 0; i < n; i++) {
+        const dir = i & 1 ? 1 : -1;
+        const x = e.x - A.ax + (dir < 0 ? A.front[row] : A.back[row] + 1);
+        sp.push({ x, y: s3_colSurface(e, x) - 1, vx: dir * rnd(0.1, 0.7), vy: -rnd(0.6, 1.7), t: 0, life: rndi(16, 32) });
+      }
+    }
+    // ripple rings on the surface while the head dives, hides and surfaces (and while the swell builds at the start)
+    const moving = e.st === 'dive' || e.st === 'under' || e.st === 'surf' || (e.st === 'enter' && e.pt > 4 && e.pt < 120);
+    if (moving && e.t % 13 === 0) e.rip.push({ x: S3C.HX - 8 + rnd(-6, 6), t: 0 });
+    for (let i = e.rip.length - 1; i >= 0; i--) if (++e.rip[i].t > 56) e.rip.splice(i, 1);
+    if (e.st === 'under' && e.t % 4 === 0) sp.push({ x: S3C.HX + rnd(-34, 34), y: S3C.FLOOR - 3, vx: 0, vy: -rnd(0.3, 0.8), t: 0, life: 70, b: true });
+    for (let i = sp.length - 1; i >= 0; i--) {
+      const p = sp[i];
+      p.t++;
+      p.x += p.vx;
+      p.y += p.vy;
+      if (!p.b) p.vy += 0.07;
+      if (p.t > p.life || (!p.b && p.y > surf + 2) || (p.b && p.y < e.wl - 4)) sp.splice(i, 1);
+    }
+    if (sp.length > 60) sp.splice(0, sp.length - 60);
+  }
+
+  /** phase change while the head is hidden: new tide, new look, clean sea */
+  function s3_colTurn(e) {
+    e.ph++;
+    const ph = S3_PH[e.ph];
+    e.mid = ph.mid;
+    e.amp = ph.amp;
+    e.tp = S3_TP0;
+    e.gated = false;
+    e.prog = 0;
+    e.cd = 0;
+    if (e.ph === 2) {
+      e.hat = 1;
+      e.crack = 1;
+      e.glow = 0.5;
+    } else {
+      e.hat = 3;
+      e.hatP.dead = true;
+      e.crack = 2;
+      e.glow = 1;
+    }
+    for (const b of G.eb) b.dead = true;
+  }
+
+  function s3_colDive(e) {
+    e.st = 'dive';
+    e.pt = 0;
+    e.gated = true;
+    e.stone.vuln = false;
+    s3_colArm(e, false);
+  }
+
+  /** the topknot slides off and tumbles into the sea (a picture only) */
+  function s3_colDropHat(e) {
+    const x0 = e.x - 25, y0 = e.y - S3_COLA.ay - 22, wl = e.wl;
+    G.fx.push({
+      k: 'fn', x: e.x, y: e.y, t: 0, life: 90,
+      draw: (c, f) => {
+        const t = f.t, vy = 0.05 * t;
+        const y = Math.min(wl - 8, y0 + 0.5 * 0.1 * t * t), x = x0 - 0.45 * t;
+        if (y < wl - 8) {
+          Sprites.drawTL(c, 's3_col_hat', Math.round(x), Math.round(y), { frame: 2 });
+        } else {
+          const s = t - Math.sqrt((wl - 8 - y0) / 0.05);
+          c.save();
+          c.beginPath();
+          c.rect(0, 0, W, wl + 5);
+          c.clip();
+          Sprites.drawTL(c, 's3_col_hat', Math.round(x), Math.round(wl - 8 + s * 0.7), { frame: 2 });
+          c.restore();
+          if (s < 22) {
+            c.fillStyle = '#ffffff';
+            for (let i = -4; i <= 4; i++) {
+              const h = (4 - Math.abs(i)) * (1 - s / 24) * 2.4;
+              c.fillRect(Math.round(x + 26 + i * (3 + s * 0.4)), Math.round(wl - 2 - h), 2, Math.max(1, Math.round(h)));
+            }
+          }
+        }
+        void vy;
+      },
+    });
+  }
+
+  ENEMIES.s3_colossus = {
+    w: 58, h: 104, hp: 99999, score: 10000, keep: true, silentDeath: true, keepOnBoss: true, expl: 'xl',
+    init(e) {
+      const A = S3_COLA;
+      const hp = Math.round(S3_HP * G.diff.hp * (1 + 0.25 * G.loop));
+      e.hp = e.maxHp = 99999;
+      Object.assign(e, {
+        x: S3C.HX, st: 'enter', pt: 0, phase: 'enter', ph: 1, tp: S3_TP0, mid: 137, amp: 25, wl: 145,
+        sink: S3_DEEP, sw: 0, sg: 0, jaw: 0, hat: 0, crack: 0, glow: 0, eye: 0, mg: 0, rc: 0, shk: 0,
+        at: null, cd: 0, prog: 0, armed: false, gated: false, spray: [], rip: [], py: 0, v: {}, rb: [], hold: 0, lastSh: 0,
+      });
+      e.y = e.mid - s3_tide(e.tp, 1) * e.amp;
+      const mk = (name, g, o) => Object.assign({ name, ox: g.ox, oy: g.oy, w: g.w, h: g.h, hp: 99999, vuln: false }, o);
+      e.stone = { name: 'stone', ox: A.stone.ox, oy: A.stone.oy, w: 14, h: 32, hp, max: hp, vuln: false, expl: 'xl', score: 5000 };
+      e.hatP = mk('hat', A.hat);
+      e.lowers = A.lower.map((b) => Object.assign(mk('lo', b), { base: b.oy, bh: b.h }));
+      e.cheek = mk('cheek', { ox: A.cheek.ox, oy: A.cheek.top, w: A.cheek.w, h: 1 });
+      e.psink = 0;
+      // parts are tested in this order: the stone first (a shot that reaches it counts), then the rest of the head (which deflects)
+      e.parts = [e.stone, e.hatP, ...A.upper.map((b) => mk('up', b)), ...e.lowers, e.cheek];
+      s3_colArm(e, false);
+    },
+
+    update(e) {
+      const P = G.player, A = S3_COLA;
+      const ph = S3_PH[e.ph];
+      e.pt++;
+      // a shield that has just taken a hit (or an invulnerable ship) makes the eye ray harmless around the ship for a while
+      if (P.shield < e.lastSh) e.hold = 50;
+      e.lastSh = P.shield;
+      if (P.inv > 0 || !P.alive) e.hold = Math.max(e.hold, 2);
+      if (e.hold > 0) e.hold--;
+      if (e.rc > 0.2) e.rc *= 0.82;
+      else e.rc = 0;
+      if (e.shk > 0) e.shk--;
+      if (e.sg > 0 && !(e.at && e.at.n === 'surge')) e.sg = Math.max(0, e.sg - 0.03);
+      if (!e.at) {
+        e.eye *= 0.9;
+        e.mg *= 0.9;
+      }
+      e.wl += (ph.wl - e.wl) * 0.03;
+      if (e.st === 'fight') {
+        e.mid += (ph.mid - e.mid) * 0.02;
+        e.amp += (ph.amp - e.amp) * 0.02;
+      }
+
+      switch (e.st) {
+        case 'enter':
+          e.sw = Math.min(1, e.pt / 45);
+          if (e.pt === 3) sfx('eruption');
+          if (e.pt === 34) G.shake = Math.max(G.shake, 2);
+          e.sink = S3_DEEP * (1 - s3_out((e.pt - 30) / 140));
+          if (P.alive && P.x > S3C.HX - 56) P.x = S3C.HX - 56; // the surfacing head never lands on the ship
+          if (e.pt >= 176) {
+            e.st = 'fight';
+            e.pt = 0;
+            e.cd = 32;
+            e.sink = 0;
+            s3_colArm(e, true);
+          }
+          break;
+
+        case 'fight': {
+          e.tp += TAU / ph.per;
+          if (!P.alive) {
+            if (e.at) s3_colEnd(e);
+          } else if (e.at) {
+            if (s3_colAtk(e, P)) {
+              s3_colEnd(e);
+              e.cd = Math.round(G.fireDelay(ph.gap));
+            }
+          } else if (e.cd > 0) e.cd--;
+          else {
+            // the next attack in the programme that suits the water right now
+            const prog = S3_PROG[e.ph], want = e.jaw === 2 && s3_colBareAt(e, 48) ? 'up' : e.jaw === 0 ? 'down' : '';
+            for (let k = 0; k < prog.length && want; k++) {
+              const i = (e.prog + k) % prog.length;
+              if (prog[i][1] === 'any' || prog[i][1] === want) {
+                s3_colBegin(e, prog[i][0]);
+                e.prog = i + 1;
+                break;
+              }
+            }
+          }
+          break;
+        }
+
+        case 'dive':
+          if (e.pt === 1) {
+            s3_colEnd(e);
+            sfx('explodeM');
+            G.shake = Math.max(G.shake, 4);
+            if (e.ph === 2) {
+              s3_colDropHat(e);
+              e.hat = 3; // the picture of it is now tumbling into the sea
+            }
+          }
+          e.sink = S3_DEEP * s3_ease(e.pt / 48);
+          if (e.pt >= 48) {
+            e.st = 'under';
+            e.pt = 0;
+            s3_colArm(e, false);
+            s3_colTurn(e);
+          }
+          break;
+
+        case 'under':
+          e.sink = S3_DEEP;
+          if (e.pt === 12) {
+            sfx('stomp');
+            G.shake = Math.max(G.shake, 3);
+          }
+          if (e.pt >= 36) {
+            e.st = 'surf';
+            e.pt = 0;
+            sfx('eruption');
+          }
+          break;
+
+        case 'surf':
+          e.sink = S3_DEEP * (1 - s3_out(e.pt / 80));
+          if (P.alive && P.x > S3C.HX - 56) P.x = S3C.HX - 56;
+          if (e.pt >= 80) {
+            e.st = 'roar';
+            e.pt = 0;
+          }
+          break;
+
+        case 'roar':
+          e.sink = 0;
+          if (P.alive && P.x > S3C.HX - 56) P.x = S3C.HX - 56;
+          if (e.pt === 2) {
+            sfx('explodeL');
+            G.shake = Math.max(G.shake, 6);
+            e.shk = 36;
+            for (let i = 0; i < 16; i++) {
+              G.fx.push({
+                k: 'part', x: e.x + rnd(-24, 24), y: e.y - 77 + rnd(-8, 8), vx: rnd(-1.4, 1.4), vy: rnd(-1.6, -0.2),
+                life: rndi(30, 54), t: 0, col: pick(['#82a082', '#567266', '#b6c89a', '#8e4a38']), big: chance(0.5),
+              });
+            }
+          }
+          if (e.pt >= 36) {
+            e.st = 'fight';
+            e.pt = 0;
+            e.cd = Math.round(G.fireDelay(40));
+            s3_colArm(e, true);
+          }
+          break;
+        default:
+          break;
+      }
+
+      /* ---- where the head is: the swell, minus any dive ---- */
+      const yb = e.mid - s3_tide(e.tp, e.ph) * e.amp;
+      e.py = e.y;
+      e.psink = e.sink;
+      e.y = yb; // (the dive is only a picture offset: the entity stays on the tide, so a dodging bot keeps its lane)
+      e.x = S3C.HX + Math.sin(e.t * 0.011) * 1.5 + e.rc;
+      // the jaw follows the water: it drops while the mouth is clear of the sea
+      const want = yb + e.sink <= e.wl + 4 ? 2 : 0;
+      if (e.t % 4 === 0 && e.jaw !== want) {
+        e.jaw += e.jaw < want ? 1 : -1;
+        if (e.jaw === 1) sfx(want === 2 ? 'coreOpen' : 'coreClose');
+        // the window is over and the stone is almost down to the gate: the Colossus gives in rather than make you wait a whole tide
+        if (e.jaw === 1 && want === 0 && e.st === 'fight' && !e.gated && ph.gate > 0 && e.stone.hp <= (ph.gate + 0.07) * e.stone.max) {
+          e.stone.hp = ph.gate * e.stone.max;
+          s3_colDive(e);
+        }
+      }
+      // the stone's box is the part of the glowing throat that is above the water; below 12 px it counts as covered
+      const sv = clamp(e.wl - (e.y + e.sink - 16), 0, 32);
+      if (e.jaw === 2) {
+        e.stone.h = Math.max(1, sv);
+        e.stone.oy = -16 + e.stone.h / 2;
+      } else {
+        e.stone.h = 32;
+        e.stone.oy = 0;
+      }
+      e.stone.vuln = e.st === 'fight' && e.jaw === 2 && sv >= 12 && !e.gated;
+      // boxes follow the picture
+      const jd = A.drop[e.jaw];
+      for (const p of e.lowers) p.oy = p.base + jd;
+      const lb = e.lowers[e.lowers.length - 1], ext = A.h - (A.h0 + jd); // the last band reaches down to the end of the base
+      lb.h = lb.bh + ext;
+      lb.oy = lb.base + jd + ext / 2;
+      e.cheek.oy = A.cheek.top + jd / 2;
+      e.cheek.h = Math.max(1, jd);
+      s3_colFx(e);
+      e.phase = 'P' + e.ph + ' ' + (e.st === 'fight' ? (e.at ? e.at.n : e.jaw === 2 ? 'up' : e.jaw === 0 ? 'sunk' : 'tide') : e.st);
+    },
+
+    gauge(e) {
+      const p = e.stone;
+      return Math.max(0, p.hp) / p.max;
+    },
+
+    onPartHurt(e, p) {
+      if (p !== e.stone) return;
+      const gate = S3_PH[e.ph].gate * p.max;
+      if (gate > 0 && p.hp <= gate) {
+        p.hp = gate; // the next phase cannot be skipped
+        s3_colDive(e);
+      }
+    },
+
+    onPartDeath(e, p) {
+      if (p === e.stone) G.kill(e);
+    },
+
+    onDeath(e) {
+      s3_colEnd(e);
+      e.w = 58;
+      e.h = 100;
+      G.fx.push({ k: 'fn', x: e.x, y: e.y, t: 0, life: 142, draw: (c, f) => ENEMIES.s3_colossus.drawWreck(e, c, f) });
+      e.y -= 24; // (the engine scatters its explosion chain around the entity: put that on the middle of the head)
+      for (let i = 0; i < 46; i++) {
+        G.later(i * 3, () => {
+          const x = e.x + rnd(-30, 30), y = e.y - 69 + rnd(-30, 50);
+          G.fx.push({
+            k: 'part', x, y, vx: rnd(-1.2, 1.2), vy: rnd(-1.5, 0.2), life: rndi(28, 58), t: 0,
+            col: pick(['#82a082', '#567266', '#b6c89a', '#34504c', '#e8ffff', '#86eef0']), big: chance(0.45),
+          });
+        });
+      }
+      G.bossDefeated(e);
+    },
+
+    /** the face crumbles tile by tile into the sea */
+    drawWreck(e, c, f) {
+      const A = S3_COLA, t = f.t, FL = S3C.FLOOR;
+      const cv = Sprites.get('s3_col_head', 2), fl = Sprites.flashOf(cv);
+      const sx = Math.round(f.x - A.ax), sy = Math.round(f.y - A.ay);
+      const flashOn = !G.reduceFlash && t < 120 && (t >> 2) % 5 === 0;
+      const surf = e.wl;
+      c.save();
+      c.beginPath();
+      c.rect(0, 0, W, FL);
+      c.clip();
+      for (let ty = 0; ty < 14; ty++) {
+        for (let tx = 0; tx < 10; tx++) {
+          const tf = 14 + ty * 5.6 + s3_hash(tx * 19 + ty * 7) * 36;
+          const s = Math.max(0, t - tf);
+          let dx = 0, dy = 0;
+          if (s > 0) {
+            dx = (s3_hash(tx * 5 + ty * 11 + 1) - 0.5) * 0.5 * s;
+            dy = 0.022 * s * s;
+          } else if (t > 4) dx = (s3_hash(tx + ty * 10 + t * 3) - 0.5) * 1.6;
+          const X = Math.round(sx + tx * 8 + dx), Y = Math.round(sy + ty * 8 + dy);
+          if (Y > FL) continue;
+          c.globalAlpha = s > 0 ? clamp(1 - (Y - surf) / 26, 0, 1) : 1;
+          if (c.globalAlpha <= 0) continue;
+          c.drawImage(flashOn ? fl : cv, tx * 8, ty * 8, Math.min(8, cv.width - tx * 8), 8, X, Y, Math.min(8, cv.width - tx * 8), 8);
+          if (s > 0 && Y + 8 > surf && Y < surf + 9) {
+            c.globalAlpha = 0.9;
+            c.fillStyle = '#ffffff';
+            c.fillRect(X + 2, Math.round(surf) - 2 - ((t + tx) & 3), 2, 2);
+          }
+        }
+      }
+      c.restore();
+      c.globalAlpha = 1;
+      const v = e.v;
+      v.x = f.x;
+      v.y = f.y;
+      v.t = e.t + t;
+      v.wl = e.wl;
+      v.sw = 1 - s3_ease((t - 100) / 40);
+      v.sg = 0;
+      v.nocap = true;
+      s3_colWater(c, v);
+    },
+
+    draw(e, c) {
+      const v = e.v, sh = e.shk > 0 ? Math.min(1, e.shk / 10) : 0;
+      v.x = e.x;
+      v.y = e.y + e.sink;
+      v.t = e.t;
+      v.jaw = e.jaw;
+      v.hat = e.hat;
+      v.crack = e.crack;
+      v.glow = e.glow;
+      v.eye = e.eye;
+      v.mg = e.mg;
+      v.wl = e.wl;
+      v.sw = e.sw;
+      v.sg = e.sg;
+      v.nocap = false;
+      v.rip = e.rip;
+      v.stone = e.jaw === 2 ? (e.stone.vuln ? 2 : 1) : 0;
+      v.sbh = e.stone.h;
+      v.sflash = e.stone.flash;
+      v.jx = sh ? Math.round((s3_hash(e.t * 3) - 0.5) * 3 * sh) : 0;
+      v.jy = sh ? Math.round((s3_hash(e.t * 5 + 1) - 0.5) * 3 * sh) : 0;
+      v.hx = e.shk > 0 && e.at && e.at.n === 'rain' ? Math.round(Math.sin(e.t * 1.9)) : 0;
+      s3_colDraw(c, v);
+      // spray and bubbles
+      for (const p of e.spray) {
+        if (p.b) {
+          c.globalAlpha = 0.6;
+          c.fillStyle = '#bff8ff';
+          c.fillRect(Math.round(p.x), Math.round(p.y), 2, 2);
+          c.fillStyle = '#143c7a';
+          c.fillRect(Math.round(p.x) + 1, Math.round(p.y) + 1, 1, 1);
+        } else {
+          c.globalAlpha = 1 - p.t / (p.life + 4);
+          c.fillStyle = p.t & 2 ? '#ffffff' : '#bff8ff';
+          c.fillRect(Math.round(p.x), Math.round(p.y), p.vy < -1 ? 1 : 2, p.vy < -1 ? 2 : 1);
+        }
+      }
+      c.globalAlpha = 1;
+      s3_colBeamFx(c, e);
+    },
+  };
+
+  /* =============================================================
    * THE STAGE
    * ============================================================= */
   STAGES.push({
@@ -1573,13 +2802,13 @@
       S.wave(3100, 'diver', { n: 3, gap: 22, y: 70, dy: 16 });
       S.wave(3160, 'spinner', { n: 5, gap: 12, y: 140, dirY: -1, turnX: 130, carry: 'last' });
 
-      /* ---- H. last checkpoint at 3330: recover power-ups before the Guardian ---- */
-      // (gulls here are a bit faster so the last squad has left the screen before the Guardian arrives)
+      /* ---- H. last checkpoint at 3330: recover power-ups before the Tide Colossus ---- */
+      // (gulls here are a bit faster so the last squad has left the screen before the Colossus surfaces)
       S.wave(3440, 's3_bird', { n: 5, gap: 14, y: 80, amp: 22, speed: 1.5, carry: 'last' });
       S.wave(3485, 'spinner', { n: 5, gap: 12, y: 56, dirY: 1, turnX: 130, carry: 'last' });
       S.wave(3525, 's3_bird', { n: 5, gap: 14, y: 136, amp: 20, speed: 1.8, carry: 'last' });
 
-      S.boss(S3_BOSS_X, 'bigcore', { level: 3 });
+      S.boss(S3_BOSS_X, 's3_colossus', {});
     },
   });
 })();

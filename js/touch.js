@@ -4,7 +4,7 @@
  *
  *   drag anywhere : move the ship. It is a relative "touchpad" drag: the ship moves by what your finger moves, it never
  *                   jumps to the touch point and the thumb never covers the action (the black bars work too).
- *   AUTO          : auto-fire on/off (default ON on touch devices). With AUTO off a SHOT button appears (hold to fire).
+ *   AUTO          : auto-fire on/off (default ON everywhere). With AUTO off a SHOT button appears (hold to fire).
  *   POWER         : activates the lit power-meter slot            II : pause
  *   menus         : tap = start / continue / resume; swipe on the title = level (left/right) and stage (up/down)
  *   title / pause : SOUND (mute), L<>R (mirror the buttons for left-handed play) and, when paused / game over, QUIT
@@ -95,10 +95,9 @@ const TouchUI = {
       setTimeout(() => Input.setVirtual(action, false), 90);
     };
     const isMenu = (mode) => mode !== 'play' && mode !== 'intro';
-    /** every touch on the controls: remember we are on the touch screen, first touch turns auto-fire on */
+    /** every touch on the controls: remember we are on the touch screen (menus then use touch wording) */
     const touched = (e) => {
       TouchUI.active = e.pointerType !== 'mouse';
-      if (TouchUI.active && G.autoPref === '' && !G.autoShot && !(G.q && G.q.get('auto'))) G.autoShot = true;
       focusGame();
     };
     window.addEventListener('keydown', () => { TouchUI.active = false; }, true);

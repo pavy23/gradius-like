@@ -7,7 +7,7 @@
  *
  *   plateau -> outer ring (menhirs) -> trilithon gates -> SWARM RUSH
  *   (mid-boss: the Hive Queen) -> hanging arcade -> dolmen field ->
- *   Guardian Core (level 2, green)
+ *   HENGE WARDEN (boss: a ring of standing stones orbiting a moon crystal)
  *
  * Everything (art, layout, patterns) is original and generated in code.
  * All names are prefixed with s2_ .
@@ -992,6 +992,7 @@
    *   s2_sentinel  floating stone eye, slow 3-way spread when aligned
    *   s2_orbiter   rune seal with orbs circling it (stone-anchored)
    *   s2_queen     mid-boss "Hive Queen" (multi-part)
+   *   s2_henge     BOSS "Henge Warden": standing stones orbiting a moon crystal
    *   s2_rune      ambient pulsing glyph (harmless, decorative)
    * =============================================================== */
   const s2_dt = () => 1 + (G.bulletMul() - 1) * 0.5; // mild difficulty scaling for drone speed
@@ -1489,6 +1490,888 @@
   };
 
   /* ===============================================================
+   * BOSS — HENGE WARDEN
+   *
+   * A ring of six standing stones orbits a moon crystal (carousel style: the
+   * stones stay upright).  The stones are armour: they absorb shots and kill on
+   * touch.  Only the crystal can be hurt, and only while a gap in the ring lines
+   * up with the ship; the crystal glows white while its lane is open.
+   *
+   * PHASE 1  RUNE SHOT   a stone on the ship's side lights its runes, then fires one slow bolt
+   *          CORE PULSE  the crystal charges (pink), then sends rings of orbs with alternating gaps
+   *          SLAM        a stone turns red, detaches, glides onto your row, locks, hovers, then rams
+   *                      along that row; while it is away the ring has a hole = a long shooting window
+   * PHASE 2  (crystal <= 50%) the crystal seals itself while the ring reverses and spins faster;
+   *          pulses become two-armed spirals, two stones slam one after the other, runes fire pairs,
+   *          moon dust trails behind the stones.
+   *
+   * parts[0] = core (the ONLY part with `max`: gauge + shootable), parts[1..6] = stones (armour,
+   * `vuln:false`, offsets rewritten every frame).  The rammed stone is a big indestructible enemy
+   * bullet for the length of the ram, so look-ahead tools see its real speed.
+   *
+   * Pacing: the crystal has a hit allowance (hits per second, growing with the number of guns) so options
+   * and lasers shorten the fight without deleting the boss; the surplus ripples off in a ring of light.
+   * Phase 1 cannot be skipped (damage below 50% is absorbed and starts the turn).  In the last 40% of
+   * phase 2 the ring spins up and the rests shrink.  The director plays a fixed rhythm (pulse / slam),
+   * one threat at a time; every big attack has a telegraph of 34-40+ frames.
+   * =============================================================== */
+  const S2_HW = {
+    cx: 187, cy: 107,         // centre of the ring (the boss body); it sways a little
+    R: 55, n: 6,              // orbit radius and number of standing stones (the lane to the crystal is open ~41% of the time)
+    sw: 12, sh: 30, cs: 16,   // stone box (equals the sprite) and core box
+    w1: 0.0165, w2: -0.0215,  // angular speed in rad/frame: phase 1 clockwise, phase 2 reversed and faster
+    hp: 86,                   // core health before difficulty / loop scaling
+    rate: 4.2, burst: 5,      // armour: hits per second the crystal absorbs (and the size of a burst) for ONE gun; it grows with every option
+    ent: 180,                 // entrance (everything harmless) in frames
+  };
+  const S2_HW_TONE = ['#1b2540', '#2c3a5c', '#3f5178', '#5a6e96', '#7a90b8', '#a3bad8', '#cfe0f2'];
+
+  /** one menhir of the ring, 12x30 including the outline; v = crown style, rune: 0 none, 1/2 = red glowing glyph (ram frames) */
+  function s2_hwPaintStone(d, v, rune) {
+    const T = S2_HW_TONE, w = 12, h = 30;
+    // hewn monoliths like the terrain's own menhirs: straight, slightly chipped sides and a flat, slanted or chipped crown
+    const shape = [
+      [[1, 29], [1, 17], [2, 16], [2, 12], [1, 11], [1, 5], [3, 3], [6, 2], [10, 1], [11, 3], [11, 9], [10, 10], [10, 15], [11, 16], [11, 24], [10, 25], [10, 27], [11, 28], [11, 29]],
+      [[1, 29], [1, 22], [2, 21], [2, 15], [1, 14], [1, 3], [5, 2], [9, 2], [11, 5], [11, 8], [10, 9], [10, 16], [11, 17], [11, 26], [10, 27], [10, 29]],
+      [[1, 29], [1, 20], [2, 19], [2, 9], [1, 8], [1, 4], [3, 2], [4, 3], [6, 2], [10, 1], [11, 6], [11, 14], [10, 15], [10, 22], [11, 23], [11, 29]],
+    ][v];
+    d.poly(shape, 'k'); // mask
+    const img = d.g.getImageData(0, 0, w, h);
+    const A = (x, y) => x >= 0 && y >= 0 && x < w && y < h && img.data[(y * w + x) * 4 + 3] > 0;
+    const xl = [], xr = [], yt = [];
+    for (let y = 0; y < h; y++) {
+      let a = -1, b = -1;
+      for (let x = 0; x < w; x++) if (A(x, y)) { if (a < 0) a = x; b = x; }
+      xl[y] = a;
+      xr[y] = b;
+    }
+    for (let x = 0; x < w; x++) { yt[x] = -1; for (let y = 0; y < h; y++) if (A(x, y)) { yt[x] = y; break; } }
+    for (let y = 0; y < h; y++) {
+      if (xl[y] < 0) continue;
+      const span = xr[y] - xl[y] + 1;
+      for (let x = xl[y]; x <= xr[y]; x++) {
+        const u = (x - xl[y] + 0.5) / span;
+        let t = u < 0.32 ? 5.1 - u * 1.2 : u < 0.7 ? 3.6 - (u - 0.32) * 0.7 : 2.2 - (u - 0.7) * 1.1;
+        t += (s2_hash(x, y, 70 + v) - 0.5) * 0.8 + 0.25 * Math.sin(y * 0.6 + v * 2.1) - y * 0.014;
+        if (y - yt[x] < 2) t += 0.9;
+        if (x === xl[y]) t += 0.7;
+        if (x === xr[y]) t -= 0.8;
+        d.px(x, y, T[Math.max(0, Math.min(6, Math.floor(t + s2_bayer(x, y))))]);
+      }
+    }
+    // a few chisel marks under the rune, a hairline crack from the crown and lichen at the foot
+    for (const [x, y] of [[3, 17 + v], [4, 17 + v], [7, 19 - v], [8, 19 - v], [3, 23], [8, 22 + (v & 1)], [5, 25]]) if (A(x, y)) d.px(x, y, T[1]);
+    let cx = [5, 7, 4][v], cy = 3 + v;
+    for (let i = 0; i < 9; i++) {
+      if (A(cx, cy) && (cy < 7 || cy > 12)) d.px(cx, cy, T[0]);
+      cy++;
+      cx += s2_hash(i, v, 5) < 0.5 ? 0 : s2_hash(i, v, 6) < 0.5 ? 1 : -1;
+    }
+    for (let y = 23; y < 29; y++) {
+      for (let x = xl[y]; x <= xr[y]; x++) {
+        const m = s2_vnoise(x * 0.55, y * 0.45, 90 + v) + (y - 23) * 0.1;
+        if (m > 0.93) d.px(x, y, ['#1b4a40', '#2c6a4c', '#4a8e5c'][Math.min(2, Math.floor((m - 0.93) * 9))]);
+      }
+    }
+    if (rune) {
+      const gl = S2_GLYPHS[4];
+      for (let j = 0; j < 7; j++) {
+        for (let i = 0; i < 5; i++) {
+          if (gl[j][i] !== '#') continue;
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) d.px(4 + i + dx, 8 + j + dy, rune === 1 ? '#a01c2c' : '#6a0c1c');
+        }
+      }
+      for (let j = 0; j < 7; j++) for (let i = 0; i < 5; i++) if (gl[j][i] === '#') d.px(4 + i, 8 + j, rune === 1 ? ((i + j) % 3 ? '#ff4a3a' : '#ffe0d0') : '#ff6a5a');
+    }
+    d.outline(rune ? '#5a0a18' : 'k');
+  }
+  for (let v = 0; v < 3; v++) Sprites.painted('s2_hw_stone' + v, 12, 30, 1, (d) => s2_hwPaintStone(d, v, 0));
+  Sprites.painted('s2_hw_ram', 12, 30, 2, (d, f) => s2_hwPaintStone(d, 1, f ? 2 : 1));
+  // red rune overlays for the slam telegraph (the cyan ones are the stage's s2_glyph0..7)
+  for (let gi = 0; gi < S2_GLYPHS.length; gi++) Sprites.recolor('s2_glyph' + gi, 's2_hw_glyphr' + gi, { '#1f8f98': '#a01c2c', '#c8fff6': '#ffd8c8' });
+
+  /** the moon crystal: a faceted octagon, eight wedges lit from the upper left; ramp = 6 tones bright -> dark */
+  const S2_HW_RAMP = {
+    d: ['#c8d6f0', '#94a8d8', '#6678b8', '#46569a', '#303c7c', '#1c2354'], // dormant: dusk violet
+    b: ['#ffffff', '#eafcff', '#b4f0ff', '#78d6f6', '#48a8e4', '#2868c0'], // lit: white-hot moonstone
+    p: ['#ffffff', '#ffe6f6', '#ffb4e0', '#f478c8', '#c050a8', '#7a2c80'], // charging a pulse
+  };
+  function s2_hwPaintCore(d, ramp, f) {
+    const c0 = 7.5;
+    for (let y = 0; y < 16; y++) {
+      for (let x = 0; x < 16; x++) {
+        const dx = x - c0, dy = y - c0;
+        if (Math.max(Math.abs(dx), Math.abs(dy)) > 6.5 || Math.abs(dx) + Math.abs(dy) > 9.5) continue; // crisp octagon
+        const r = Math.hypot(dx, dy);
+        const sec = Math.floor((Math.atan2(dy, dx) + Math.PI) / (Math.PI / 4)) % 8;
+        const nrm = (sec + 0.5) * (Math.PI / 4) - Math.PI;
+        const lit = -(Math.cos(nrm) + Math.sin(nrm)) * 0.7071; // +1 faces the upper left
+        let t = 2.9 - lit * 1.6;
+        if (r < 2.6) t = 0;
+        else if (r < 4.9) t -= 1.2;
+        d.px(x, y, ramp[Math.max(0, Math.min(5, Math.round(t)))]);
+      }
+    }
+    // facet edges: thin light seams between the wedges
+    for (let k = 0; k < 8; k++) {
+      const a = k * (Math.PI / 4) - Math.PI;
+      for (let rr = 2.8; rr < 6.4; rr += 0.5) {
+        const x = Math.round(c0 + Math.cos(a) * rr), y = Math.round(c0 + Math.sin(a) * rr);
+        if (Math.abs(x - c0) <= 6.5 && Math.abs(y - c0) <= 6.5 && Math.abs(x - c0) + Math.abs(y - c0) <= 9.5) d.px(x, y, ramp[1]);
+      }
+    }
+    d.px(7, 7, '#ffffff'); d.px(8, 7, '#ffffff'); d.px(7, 8, '#ffffff'); d.px(8, 8, ramp[1]);
+    if (f) { d.px(4, 3, '#ffffff'); d.px(3, 4, '#ffffff'); d.px(4, 4, '#ffffff'); d.px(4, 2, ramp[1]); d.px(2, 4, ramp[1]); }
+    else { d.px(11, 10, '#ffffff'); d.px(11, 9, ramp[1]); d.px(10, 10, ramp[1]); }
+    d.outline('k');
+  }
+  for (const k of ['d', 'b', 'p']) Sprites.painted('s2_hw_core_' + k, 16, 16, 2, (d, f) => s2_hwPaintCore(d, S2_HW_RAMP[k], f));
+  /** dithered halo (drawn additively behind the crystal) */
+  function s2_hwHalo(name, rgb, R) {
+    const S = R * 2 + 1;
+    Sprites.painted(name, S, S, 1, (d) => {
+      for (let y = 0; y < S; y++) {
+        for (let x = 0; x < S; x++) {
+          const dd = Math.hypot(x - R, y - R) / R;
+          if (dd >= 1) continue;
+          const t = (1 - dd) * (1 - dd);
+          if (t * 1.1 > s2_bayer(x, y) * 0.9 + 0.04) d.px(x, y, 'rgba(' + rgb + ',' + (0.35 + 0.5 * t).toFixed(2) + ')');
+        }
+      }
+    });
+  }
+  s2_hwHalo('s2_hw_haloc', '170,240,255', 26);
+  s2_hwHalo('s2_hw_halop', '255,150,225', 26);
+
+  /* ---------------- boss: tuning ---------------- */
+  const S2_HW_GL = [4, 0, 5, 2, 7, 3];  // rune glyph carved into each stone
+  const S2_HW_T = {
+    rise: 40,          // slam telegraph 1: runes turn red, the stone lifts and shakes
+    glideMin: 26, glideMax: 80, // slam telegraph 2: it glides onto your row (and follows you until it locks)
+    hover: 34,         // slam telegraph 3: locked, hovering, lane marker blinking
+    ramV: 3.0, hx: 168,   // the ram flies at this constant speed (px/frame) from this x; readable for people and for look-ahead tools alike
+    away: 16, back: 104, home: 40, // out of sight / ghost return along the edge / direct ghost return
+  };
+  const S2_HW_SP = { step: 0.22, every: 4, cnt: 14, v: 1.1 }; // phase 2 spiral: angle step per emission, frames between, emissions, speed
+  // the director: a fixed, learnable rhythm (rests scale with G.fireDelay); `loop` = index where the repeat starts.
+  // One threat at a time: the rest before a slam is long enough for the last rings of orbs to drift past the ship.
+  const S2_HW_SEQ1 = {
+    loop: 3,
+    list: [{ n: 'rest', t: 70 }, { n: 'pulse' }, { n: 'rest', t: 115 },
+      { n: 'slam', k: 1 }, { n: 'rest', t: 45 }, { n: 'pulse' }, { n: 'rest', t: 55 }, { n: 'pulse' }, { n: 'rest', t: 115 }],
+  };
+  const S2_HW_SEQ2 = {
+    loop: 3,
+    list: [{ n: 'rest', t: 50 }, { n: 'spiral' }, { n: 'rest', t: 105 },
+      { n: 'slam', k: 2 }, { n: 'rest', t: 40 }, { n: 'spiral' }, { n: 'rest', t: 50 }, { n: 'pulse' }, { n: 'rest', t: 105 }],
+  };
+
+  /* ---------------- boss: helpers ---------------- */
+  const s2_hwEase = (u) => (u <= 0 ? 0 : u >= 1 ? 1 : u * u * (3 - 2 * u));
+  /** where stone s sits in the ring right now (a pulse pushes the ring out a few pixels for a moment: e.kick) */
+  const s2_hwSlot = (e, s) => {
+    const a = s.a0 + e.ang, r = S2_HW.R + 3 * e.kick;
+    return [e.x + Math.cos(a) * r, e.y + Math.sin(a) * r];
+  };
+  /** moon dust: a few pale specks (cosmetic; capped so a long fight never floods the fx list) */
+  function s2_hwDust(x, y, n, sp, life) {
+    if (G.fx.length > 240) return;
+    for (let i = 0; i < n; i++) {
+      G.fx.push({
+        k: 'part', x: x + rnd(-2, 2), y: y + rnd(-2, 2), vx: rnd(-sp, sp), vy: rnd(-sp, sp) - 0.1,
+        life: rndi(Math.floor(life * 0.6), life), t: 0, col: pick(['#cfe4ff', '#9fc0e8', '#ffffff', '#7fa6dc']), big: chance(0.3),
+      });
+    }
+  }
+  /** a ring of slow orbs from the crystal; alternating the phase leaves gaps where the previous ring had orbs */
+  function s2_hwRing(e, n, ph, speed) {
+    sfx('ring');
+    for (let i = 0; i < n; i++) {
+      const a = ph + (i * TAU) / n;
+      G.ebullet(e.x + Math.cos(a) * 10, e.y + Math.sin(a) * 10, Math.cos(a) * speed, Math.sin(a) * speed, { spr: 'ebullet2', w: 6, h: 6, anim: 8, quiet: true });
+    }
+  }
+  /** emission k of the two-armed spiral */
+  function s2_hwSpiral(e, k, pl) {
+    const a = pl.a0 + pl.dir * k * S2_HW_SP.step;
+    if (k === 0) sfx('ring');
+    for (let arm = 0; arm < 2; arm++) {
+      const aa = a + arm * Math.PI;
+      G.ebullet(e.x + Math.cos(aa) * 10, e.y + Math.sin(aa) * 10, Math.cos(aa) * S2_HW_SP.v, Math.sin(aa) * S2_HW_SP.v, { spr: 'ebullet2', w: 6, h: 6, anim: 8, quiet: true });
+    }
+  }
+  /** how much of the crystal a horizontal shot from the left can reach (0 covered .. 1 open); mixes in the ship's own row */
+  function s2_hwExposure(e) {
+    const P = G.player, cx = e.x, cy = e.y;
+    const blocked = (y) => {
+      for (const s of e.stones) {
+        if (s.p.dead || s.p.solid === false) continue; // away / ghost stones do not stop shots
+        if (s.x - 6 > cx) continue; // right of the crystal: behind it
+        if (Math.abs(s.y - y) < S2_HW.sh / 2 + 1.5) return true;
+      }
+      return false;
+    };
+    let free = 0;
+    for (let k = 0; k < 8; k++) if (!blocked(cy - 7 + k * 2)) free++;
+    const band = free / 8;
+    if (P.alive && Math.abs(P.y - cy) < 14) return band * 0.4 + (blocked(clamp(P.y, cy - 8, cy + 8)) ? 0 : 0.6);
+    return band;
+  }
+  /** the stone whose empty slot will be at the ship's side (left) when the ram is over: its absence is the shooting window */
+  function s2_hwPickSlam(e, delay) {
+    let best = null, bd = 9;
+    for (const s of e.stones) {
+      if (s.mode !== 'ring' || !s.armed) continue;
+      const d = Math.abs(angDiff(s.a0 + e.ang + e.om * delay, Math.PI));
+      if (d < bd) { bd = d; best = s; }
+    }
+    return best;
+  }
+  function s2_hwStartSlam(e) {
+    const s = s2_hwPickSlam(e, 205); // rise + glide + hover + ~80 frames: the gap reaches the ship's side once it is back in its row
+    if (!s) return null;
+    s.mode = 'rise';
+    s.t = 0;
+    s.fire = 0; // a half-lit rune shot is dropped
+    s.hx = S2_HW_T.hx;
+    sfx('coreOpen');
+    return s;
+  }
+  /** ghost flight straight back to the slot (an aborted slam) */
+  function s2_hwHome(s) {
+    s.mode = 'home';
+    s.t = 0;
+    s.hx0 = s.x;
+    s.hy0 = s.y;
+    s.p.dead = false;
+    s.p.harmless = true;
+    s.p.solid = false;
+  }
+  /** the stone turns solid again in its slot (waits while the ship is inside its box) */
+  function s2_hwRearm(e, s) {
+    const P = G.player;
+    if (P.alive && Math.abs(P.x - s.x) < 20 && Math.abs(P.y - s.y) < 26) return false;
+    s.mode = 'ring';
+    s.t = 0;
+    s.bullet = null;
+    s.p.dead = false;
+    s.p.harmless = false;
+    s.p.solid = true;
+    s.flash = 10;
+    sfx('stomp');
+    s2_hwDust(s.x, s.y + 12, 6, 0.8, 22);
+    return true;
+  }
+  /** the ram: the stone becomes a big, indestructible enemy bullet that flies along its locked row at constant speed */
+  function s2_hwLaunch(e, s) {
+    const v = S2_HW_T.ramV * (1 + (G.bulletMul() - 1) * 0.4);
+    const b = G.ebullet(s.x, s.y, -v, 0, {
+      spr: 's2_hw_ram', w: S2_HW.sw, h: S2_HW.sh, hp: 1e6, solid: false, raw: true, anim: 5, quiet: true,
+      custom: (bb) => { if ((bb.t & 1) === 0) s2_hwDust(bb.x + 7, bb.y + rnd(-13, 13), 1, 0.5, 16); },
+    });
+    if (!b) { s2_hwHome(s); return; }
+    s.bullet = b;
+    s.mode = 'ram';
+    s.t = 0;
+    s.p.dead = true;
+    sfx('bossLaser');
+    G.shake = Math.max(G.shake, 2);
+  }
+
+  /* ---------------- boss: per-frame logic ---------------- */
+  /** every stone: ring slot, slam state machine, entrance, return; then mirror the position into its part box */
+  function s2_hwStones(e) {
+    const TT = S2_HW_T, P = G.player, p2 = e.st === 'p2';
+    e.slamCrit = false;
+    e.slamAct = false;
+    for (const s of e.stones) {
+      s.t++;
+      if (s.flash > 0) s.flash--;
+      if (s.cd > 0) s.cd--;
+      const p = s.p;
+      const slot = s2_hwSlot(e, s);
+      switch (s.mode) {
+        case 'enter': {
+          const u = (e.pt - s.t0) / 64;
+          s.show = u >= 0;
+          if (u < 0) { s.x = W + 60; s.y = slot[1]; break; }
+          if (s.sy0 === undefined) s.sy0 = slot[1];
+          const k = s2_hwEase(u);
+          s.x = W + 28 + (slot[0] - (W + 28)) * k;
+          s.y = s.sy0 + (slot[1] - s.sy0) * k;
+          if ((e.t & 1) === 0 && u < 1) s2_hwDust(s.x + 7, s.y + rnd(-12, 12), 1, 0.3, 20);
+          if (u >= 1) {
+            s.mode = 'ring';
+            s.t = 0;
+            sfx('stomp');
+            s2_hwDust(slot[0], slot[1] + 13, 6, 0.8, 22);
+          }
+          break;
+        }
+        case 'ring':
+          s.x = slot[0];
+          s.y = slot[1];
+          if (s.fire > 0 && --s.fire === 0) s2_hwRuneShot(e, s);
+          if (p2 && (e.t + s.i * 2) % 3 === 0 && Math.abs(e.om) > 0.01) {
+            // moon dust trails behind a moving stone
+            const a = s.a0 + e.ang, dir = e.om > 0 ? 1 : -1;
+            s2_hwDust(s.x - dir * -Math.sin(a) * 7, s.y - dir * Math.cos(a) * 7 + rnd(-8, 8), 1, 0.25, 22);
+          }
+          break;
+        case 'rise': {
+          const k = s2_hwEase(s.t / TT.rise);
+          s.x = slot[0] + (s.t & 2 ? 1 : -1) * k * 0.9;
+          s.y = slot[1] - 7 * k;
+          if (s.t >= TT.rise) { s.mode = 'glide'; s.t = 0; }
+          break;
+        }
+        case 'glide': {
+          const hx = TT.hx;
+          const ty = clamp(P.alive ? P.y : e.y, 34, 176);
+          s.hx = hx;
+          s.x += clamp((hx - s.x) * 0.07, -2.4, 2.4);
+          s.y += clamp((ty - s.y) * 0.07, -2.4, 2.4);
+          s.lane = s.y;
+          const near = Math.abs(hx - s.x) < 2 && Math.abs(ty - s.y) < 2.5;
+          if ((s.t >= TT.glideMin && near) || s.t >= TT.glideMax) { s.mode = 'hover'; s.t = 0; s.lane = s.y; }
+          break;
+        }
+        case 'hover':
+          e.slamCrit = true;
+          s.x = s.hx + (s.t > TT.hover - 14 ? (s.t & 1 ? 1 : -1) : 0);
+          s.y = s.lane;
+          if (s.t >= TT.hover) { if (P.alive) s2_hwLaunch(e, s); else s2_hwHome(s); }
+          break;
+        case 'ram':
+          if (s.bullet) {
+            s.x = s.bullet.x;
+            s.y = s.bullet.y;
+            if (!s.bullet.dead) e.slamCrit = true;
+            else {
+              if (s.bullet.x > -10) { G.debris(s.x, s.y, 10); sfx('explodeS'); } // the shield / a hit broke it up
+              s.mode = 'away';
+              s.t = 0;
+            }
+          } else { s.mode = 'away'; s.t = 0; }
+          break;
+        case 'away':
+          if (s.t >= TT.away) {
+            s.mode = 'back';
+            s.t = 0;
+            s.edge = P.alive && P.y < 112 ? 172 : 30; // the edge farther from the ship
+            p.dead = false;
+            p.harmless = true;
+            p.solid = false;
+          }
+          break;
+        case 'back': {
+          const u = s.t / TT.back, xT = 112;
+          if (u < 0.62) {
+            s.x = -16 + (xT + 16) * s2_hwEase(u / 0.62);
+            s.y = s.edge;
+          } else {
+            const k = s2_hwEase((u - 0.62) / 0.38);
+            s.x = xT + (slot[0] - xT) * k;
+            s.y = s.edge + (slot[1] - s.edge) * k;
+          }
+          if ((e.t & 3) === 0) s2_hwDust(s.x - 5, s.y + rnd(-12, 12), 1, 0.3, 20);
+          if (u >= 1) { s.x = slot[0]; s.y = slot[1]; s2_hwRearm(e, s); }
+          break;
+        }
+        case 'home': {
+          const k = s2_hwEase(s.t / TT.home);
+          s.x = s.hx0 + (slot[0] - s.hx0) * k;
+          s.y = s.hy0 + (slot[1] - s.hy0) * k;
+          if (s.t >= TT.home) { s.x = slot[0]; s.y = slot[1]; s2_hwRearm(e, s); }
+          break;
+        }
+        default: break;
+      }
+      if (s.mode === 'rise' || s.mode === 'glide' || s.mode === 'hover' || (s.mode === 'ram' && s.bullet && !s.bullet.dead)) e.slamAct = true;
+      // rune light: calm glow, bright while about to shoot, red during a slam, flaring at the phase change
+      const base = s.armed ? (p2 ? 0.85 : 0.55) : 0.3;
+      const tgt = s.fire > 0 || (e.st === 'turn' && e.pt < 70) ? 1 : e.charge > 0.05 ? 0.1 : base;
+      s.glow += (tgt - s.glow) * 0.2;
+      const hot = s.mode === 'rise' || s.mode === 'glide' || s.mode === 'hover' ? 1 : 0;
+      s.red += (hot - s.red) * 0.15;
+      p.ox = s.x - e.x;
+      p.oy = s.y - e.y;
+    }
+  }
+  /** one slow bolt (two in phase 2) from a stone that has finished lighting its runes */
+  function s2_hwRuneShot(e, s) {
+    const P = G.player;
+    if (!P.alive || s.mode !== 'ring') return;
+    const o = { spr: 'ebulletL', w: 6, h: 6, anim: 8 };
+    if (e.st === 'p2') G.fan(s.x - 4, s.y, 2, 0.3, 1.25, o);
+    else {
+      const [vx, vy] = G.aim(s.x - 4, s.y, 1.25);
+      G.ebullet(s.x - 4, s.y, vx, vy, o);
+    }
+  }
+  /** a stone passing the ship's side lights its runes for 20 frames, then shoots */
+  function s2_hwRunes(e) {
+    const P = G.player;
+    if (e.rGate > 0) { e.rGate--; return; }
+    if (!P.alive || e.slamAct || (e.pl && e.pl.t > 26) || e.charge > 0.6) return;
+    let aimed = 0;
+    for (const b of G.eb) if (!b.dead && b.spr === 'ebulletL') aimed++;
+    if (aimed >= 4) return;
+    const toP = Math.atan2(P.y - e.y, P.x - e.x);
+    let best = null, bd = 0.42;
+    for (const s of e.stones) {
+      if (s.mode !== 'ring' || !s.armed || s.cd > 0 || s.fire > 0) continue;
+      const d = Math.abs(angDiff(s.a0 + e.ang, toP));
+      if (d < bd) { bd = d; best = s; }
+    }
+    if (best) {
+      best.fire = 20;
+      best.cd = Math.round(G.fireDelay(200));
+      e.rGate = Math.round(G.fireDelay(e.st === 'p2' ? 66 : 88));
+    }
+  }
+  /** the crystal charges (pink) for 40 frames, then releases rings / a spiral */
+  function s2_hwPulse(e) {
+    const pl = e.pl, P = G.player, CH = 40;
+    pl.t++;
+    if (!P.alive) { e.pl = null; e.charge = 0; return; } // nothing to aim at: drop the charge / the rest of the pattern
+    e.charge = pl.t < CH ? pl.t / CH : Math.max(0, 1 - (pl.t - CH) / 22);
+    if (pl.t === 1) sfx('coreOpen');
+    if (!pl.spiral) {
+      if (pl.t === CH) {
+        pl.ph = Math.atan2(P.y - e.y, P.x - e.x) + (pl.aimed ? 0 : Math.PI / 16);
+        s2_hwRing(e, 16, pl.ph, 1.15);
+        e.kick = 1;
+      } else if (pl.t === CH + 26) {
+        s2_hwRing(e, 16, pl.ph + Math.PI / 16, 1.15);
+        e.kick = 1;
+      }
+      if (pl.t >= CH + 44) e.pl = null;
+    } else {
+      const k = pl.t - CH;
+      if (k >= 0 && k % S2_HW_SP.every === 0 && k / S2_HW_SP.every < S2_HW_SP.cnt) {
+        if (k === 0) pl.a0 = Math.atan2(P.y - e.y, P.x - e.x) - pl.dir * 1.1;
+        s2_hwSpiral(e, k / S2_HW_SP.every, pl);
+      }
+      if (pl.t >= CH + S2_HW_SP.every * S2_HW_SP.cnt + 24) e.pl = null;
+    }
+  }
+  /** phase 1 / 2: walk through the rhythm list */
+  function s2_hwDirect(e) {
+    const P = G.player, p2 = e.st === 'p2';
+    // escalation: the lower the crystal, the faster the ring and the shorter the rests (0 until 40% health, 1 at the end)
+    e.hot = p2 ? clamp((0.4 - e.core.hp / e.core.max) / 0.4, 0, 1) : 0;
+    if (p2) e.omT = S2_HW.w2 * (1 + 0.15 * e.hot);
+    if (e.pl) s2_hwPulse(e);
+    else if (e.charge > 0) e.charge = Math.max(0, e.charge - 0.05);
+    if (!e.cur) {
+      if (!P.alive || e.st === 'enter') return;
+      const seq = p2 ? S2_HW_SEQ2 : S2_HW_SEQ1, L = seq.list;
+      const i = e.si++;
+      const st = L[i < L.length ? i : seq.loop + ((i - seq.loop) % (L.length - seq.loop))];
+      e.cur = { n: st.n, t: 0, w: st.t ? Math.round(G.fireDelay(st.t) * rnd(0.85, 1.2) * (1 - 0.2 * e.hot)) : 0, k: st.k || 1, stones: [] };
+      if (st.n === 'pulse' || st.n === 'spiral') {
+        e.rn = (e.rn || 0) + 1;
+        e.pl = { t: 0, spiral: st.n === 'spiral', aimed: e.rn % 2 === 1, dir: e.rn % 2 ? 1 : -1, a0: 0 };
+      } else if (st.n === 'slam') {
+        const s = s2_hwStartSlam(e);
+        if (s) e.cur.stones.push(s);
+        else { e.cur.n = 'rest'; e.cur.w = 30; }
+      }
+    }
+    const cur = e.cur;
+    cur.t++;
+    if (cur.n === 'rest') { if (cur.t >= cur.w) e.cur = null; }
+    else if (cur.n === 'pulse' || cur.n === 'spiral') { if (!e.pl) e.cur = null; }
+    else if (cur.n === 'slam') {
+      if (cur.stones.length < cur.k && cur.t === 55) {
+        const s = s2_hwStartSlam(e);
+        if (s) cur.stones.push(s);
+        else cur.k = cur.stones.length;
+      }
+      const done = (s) => s.mode === 'away' || s.mode === 'back' || s.mode === 'home' || s.mode === 'ring' || (s.mode === 'ram' && s.t > 24);
+      if (cur.stones.length >= cur.k && cur.stones.every(done)) e.cur = null;
+    }
+    s2_hwRunes(e);
+  }
+  /** the entrance: stones fly in one by one and settle, the crystal fades up; everything is harmless until the end */
+  function s2_hwEnter(e) {
+    const T = S2_HW, P = G.player, t = e.pt;
+    e.om = T.w1 * s2_hwEase(t / T.ent);
+    e.coreA = s2_hwEase((t - 56) / 110);
+    if (t === 60) sfx('coreOpen');
+    const inZone = P.alive && Math.hypot(P.x - e.x, P.y - e.y) < T.R + 18;
+    if (inZone) P.x = Math.max(14, P.x - 1.5); // the forming ring gently pushes the ship out
+    if (t < T.ent) return;
+    if (inZone && t < T.ent + 80) { P.x = Math.max(14, P.x - 1.2); return; } // arm only when the ring is clear
+    if (inZone) P.x = Math.max(14, e.x - T.R - 30);
+    e.st = 'p1';
+    e.pt = 0;
+    e.si = 0;
+    e.cur = null;
+    e.pl = null;
+    e.omT = T.w1;
+    e.coreA = 1;
+    const c = e.core;
+    c.harmless = false;
+    c.vuln = true;
+    c.solid = true;
+    for (const s of e.stones) { s.armed = true; s.p.harmless = false; s.p.solid = true; s.flash = 10; }
+    sfx('coreClose');
+    G.shake = Math.max(G.shake, 2);
+  }
+  /** phase change: the crystal seals itself, the ring brakes, reverses and spins up; attacks pause */
+  function s2_hwBeginTurn(e) {
+    e.st = 'turn';
+    e.pt = 0;
+    e.pl = null;
+    e.cur = null;
+    e.omT = 0;
+    e.core.vuln = false;
+    for (const s of e.stones) if (s.mode === 'rise' || s.mode === 'glide' || s.mode === 'hover') s2_hwHome(s);
+  }
+  function s2_hwTurn(e) {
+    const T = S2_HW, t = e.pt;
+    e.seal = Math.min(1, t / 10) * (t > 90 ? Math.max(0, 1 - (t - 90) / 10) : 1);
+    e.charge = Math.max(0, e.charge - 0.05);
+    if (t === 1) { sfx('coreClose'); G.shake = Math.max(G.shake, 3); }
+    if (t < 26) e.om *= 0.88;
+    else e.omT = T.w2;
+    if (t === 26) {
+      e.kick = 1.6;
+      sfx('electric');
+      for (const s of e.stones) if (s.mode === 'ring') s2_hwDust(s.x, s.y, 6, 1, 26);
+    }
+    if (t >= 100) {
+      e.st = 'p2';
+      e.pt = 0;
+      e.si = 0;
+      e.cur = null;
+      e.core.vuln = true;
+      sfx('coreOpen');
+    }
+  }
+
+  /* ---------------- boss: drawing ---------------- */
+  /** dotted orbit track and the little ritual circle around the crystal */
+  function s2_hwDrawTrack(c, e) {
+    const R = S2_HW.R, n = 60, hot = e.st === 'p2' || e.st === 'turn', fade = e.st === 'enter' ? Math.min(1, e.pt / 60) : 1;
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * TAU + e.ang * 0.35;
+      c.globalAlpha = (k % 5 === 0 ? 0.85 : 0.55) * fade;
+      c.fillStyle = k % 5 === 0 ? (hot ? '#d0c0ff' : '#8afbe8') : (hot ? '#6a58b8' : '#2a8f98');
+      c.fillRect(Math.round(e.x + Math.cos(a) * R), Math.round(e.y + Math.sin(a) * R), 1, 1);
+    }
+    c.globalAlpha = 0.65 * e.coreA;
+    c.fillStyle = hot ? '#d0c0ff' : '#8afbe8';
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * TAU - e.ang * 0.6;
+      c.fillRect(Math.round(e.x + Math.cos(a) * 15), Math.round(e.y + Math.sin(a) * 15), 1, 1);
+    }
+    c.globalAlpha = 1;
+  }
+  const S2_HW_CRACKS = [ // short jagged breaks that start at the rim and stop before the centre
+    [[-6, -3], [-5, -3], [-5, -2], [-4, -2], [-4, -1]],
+    [[6, 2], [5, 2], [5, 3], [4, 3], [4, 4]],
+    [[-3, 6], [-3, 5], [-2, 5], [-2, 4]],
+    [[3, -6], [3, -5], [4, -5], [4, -4]],
+  ];
+  function s2_hwDrawCore(c, e) {
+    const core = e.core;
+    if (core.dead || e.coreA < 0.02) return;
+    const a = e.coreA, gl = e.glow, ch = e.charge, sl = e.seal;
+    const fr = (e.t >> 3) & 1;
+    const oc = c.globalCompositeOperation;
+    c.globalCompositeOperation = 'lighter';
+    Sprites.draw(c, 's2_hw_haloc', e.x, e.y, { alpha: (0.16 + 0.6 * gl + 0.3 * sl) * a });
+    if (ch > 0.02) Sprites.draw(c, 's2_hw_halop', e.x, e.y, { alpha: 0.25 + 0.7 * ch });
+    c.globalCompositeOperation = oc;
+    Sprites.draw(c, 's2_hw_core_d', e.x, e.y, { frame: fr, alpha: a });
+    if (gl > 0.04) Sprites.draw(c, 's2_hw_core_b', e.x, e.y, { frame: fr, alpha: gl * a });
+    if (ch > 0.04) Sprites.draw(c, 's2_hw_core_p', e.x, e.y, { frame: fr, alpha: ch });
+    if (core.flash > 0) Sprites.draw(c, 's2_hw_core_b', e.x, e.y, G.reduceFlash ? { frame: fr, alpha: 0.4 } : { frame: fr, flash: true }); // hit feedback (a mild brighten when flashing is off)
+    // wear: the crystal cracks as it loses health (light leaks through the cracks)
+    const k = core.hp / core.max;
+    const n = core.flash > 0 ? 0 : k < 0.25 ? 4 : k < 0.5 ? 3 : k < 0.75 ? 2 : k < 0.92 ? 1 : 0;
+    for (let i = 0; i < n; i++) {
+      const cr = S2_HW_CRACKS[i];
+      c.fillStyle = '#0c0c18';
+      for (const [dx, dy] of cr) c.fillRect(Math.round(e.x) + dx, Math.round(e.y) + dy, 1, 1);
+      c.fillStyle = '#ffffff';
+      const [lx, ly] = cr[2];
+      c.fillRect(Math.round(e.x) + lx, Math.round(e.y) + ly + 1, 1, 1);
+    }
+    // a hit the armour shrugged off: a quick ring around the crystal
+    if (e.ripple > 0) {
+      const u = (8 - e.ripple) / 8, rr = 9 + 7 * u;
+      c.globalAlpha = 1 - u;
+      c.fillStyle = '#ffffff';
+      for (let i = 0; i < 20; i++) {
+        const an = (i / 20) * TAU;
+        c.fillRect(Math.round(e.x + Math.cos(an) * rr), Math.round(e.y + Math.sin(an) * rr), 1, 1);
+      }
+      c.globalAlpha = 1;
+    }
+    // pulse charge: sparks gather into the crystal
+    if (ch > 0.04 && e.pl && e.pl.t < 42) {
+      for (let i = 0; i < 6; i++) {
+        const an = (i / 6) * TAU + e.t * 0.12, rr = 20 * (1 - ch) + 4;
+        c.fillStyle = i & 1 ? '#ffffff' : '#ffb4e0';
+        c.fillRect(Math.round(e.x + Math.cos(an) * rr), Math.round(e.y + Math.sin(an) * rr), 2, 2);
+      }
+    }
+    // release: an expanding ring of light
+    if (e.pl && !e.pl.spiral && ((e.pl.t > 40 && e.pl.t < 56) || (e.pl.t > 66 && e.pl.t < 82))) {
+      const u = (e.pl.t > 66 ? e.pl.t - 66 : e.pl.t - 40) / 16, rr = 10 + 30 * u;
+      c.globalAlpha = 1 - u;
+      c.fillStyle = '#ffd6f0';
+      for (let i = 0; i < 28; i++) {
+        const an = (i / 28) * TAU;
+        c.fillRect(Math.round(e.x + Math.cos(an) * rr), Math.round(e.y + Math.sin(an) * rr), 1, 1);
+      }
+      c.globalAlpha = 1;
+    }
+    // sealed during the phase change: a translucent shell with a bright rim (shots bounce off it)
+    if (sl > 0.02) {
+      const cx = Math.round(e.x), cy = Math.round(e.y);
+      c.globalAlpha = 0.3 * sl;
+      c.fillStyle = '#bff0ff';
+      for (let dy = -11; dy <= 11; dy++) {
+        const hw = Math.round(Math.sqrt(12.4 * 12.4 - dy * dy));
+        c.fillRect(cx - hw, cy + dy, hw * 2, 1);
+      }
+      c.globalAlpha = sl;
+      for (let i = 0; i < 36; i++) {
+        const an = (i / 36) * TAU + e.t * 0.05;
+        c.fillStyle = i % 4 === 0 ? '#ffffff' : '#9ee8ff';
+        c.fillRect(Math.round(e.x + Math.cos(an) * 12.5), Math.round(e.y + Math.sin(an) * 12.5), i % 4 === 0 ? 2 : 1, 1);
+      }
+      c.globalAlpha = 1;
+    }
+    // the ring reverses with a shockwave
+    if (e.st === 'turn' && e.pt >= 26 && e.pt < 54) {
+      const u = (e.pt - 26) / 28, rr = 14 + 86 * u;
+      c.globalAlpha = (1 - u) * 0.9;
+      c.fillStyle = '#d8f4ff';
+      for (let i = 0; i < 64; i++) {
+        const an = (i / 64) * TAU;
+        c.fillRect(Math.round(e.x + Math.cos(an) * rr), Math.round(e.y + Math.sin(an) * rr), 2, 1);
+      }
+      c.globalAlpha = 1;
+    }
+  }
+  function s2_hwDrawStone(c, e, s) {
+    if (s.mode === 'ram' || s.mode === 'away' || s.show === false) return;
+    const p = s.p;
+    const a = !s.armed ? 0.6 : p.solid === false ? 0.5 : 1;
+    const name = 's2_hw_stone' + s.v;
+    if (s.armed && p.solid === false) {
+      const oc = c.globalCompositeOperation;
+      c.globalCompositeOperation = 'lighter';
+      Sprites.draw(c, 's2_hw_haloc', s.x, s.y, { alpha: 0.28 });
+      c.globalCompositeOperation = oc;
+    }
+    Sprites.draw(c, name, s.x, s.y, { alpha: a });
+    if (s.red > 0.35) {
+      // slam telegraph: the stone blinks red (steady when flashing is off)
+      const img = s2_tinted(name, 0, '#ff2a3a');
+      if (G.reduceFlash || (s.t >> 2) & 1) {
+        const oa = c.globalAlpha;
+        if (G.reduceFlash) c.globalAlpha = 0.55;
+        c.drawImage(img, Math.round(s.x - 6), Math.round(s.y - 15));
+        c.globalAlpha = oa;
+      }
+    }
+    const hot = s.red > 0.5;
+    const ra = (hot ? 1 : 0.3 + 0.7 * s.glow) * a;
+    Sprites.draw(c, (hot ? 's2_hw_glyphr' : 's2_glyph') + s.gl, s.x + 0.5, s.y - 3.5, { alpha: ra }); // glyph carved high on the face
+    if (!hot && s.glow > 0.8) {
+      const oc = c.globalCompositeOperation;
+      c.globalCompositeOperation = 'lighter';
+      Sprites.draw(c, 's2_glyph' + s.gl, s.x + 0.5, s.y - 3.5, { alpha: 0.5 * (s.glow - 0.7) * a });
+      c.globalCompositeOperation = oc;
+    }
+    if (s.flash > 0 && !G.reduceFlash) Sprites.draw(c, name, s.x, s.y, { flash: true, alpha: 0.7 * (s.flash / 10) });
+  }
+  /** the lane of a locked slam: dashed centre line and the edges of the danger band, blinking */
+  function s2_hwDrawLane(c, s) {
+    const y = Math.round(s.y), x1 = Math.round(s.x - 8);
+    const on = G.reduceFlash || ((s.t >> 2) & 1) === 0;
+    const bright = s.mode === 'hover';
+    c.fillStyle = on ? '#ff5a4a' : '#a01c2c';
+    c.globalAlpha = bright ? 1 : 0.55;
+    for (let x = x1; x > 0; x -= 8) c.fillRect(x - 4, y, 4, 1);
+    c.fillStyle = '#ff5a4a';
+    c.globalAlpha = bright ? 0.7 : 0.35;
+    for (let x = x1; x > 0; x -= 6) { c.fillRect(x, y - 17, 2, 1); c.fillRect(x, y + 17, 2, 1); }
+    c.globalAlpha = 1;
+  }
+
+  ENEMIES.s2_henge = {
+    w: 124, h: 120, hp: 99999, score: 10000, keep: true, expl: 'xl', silentDeath: true,
+    init(e) {
+      const T = S2_HW;
+      const ch = Math.round(T.hp * G.diff.hp * (1 + 0.25 * G.loop));
+      e.hp = e.maxHp = 99999;
+      e.x = T.cx;
+      e.y = T.cy;
+      e.st = 'enter'; // enter -> p1 -> turn -> p2
+      e.pt = 0;
+      e.ang = -Math.PI / 2;
+      e.om = 0;
+      e.omT = 0;
+      e.swayK = 0;
+      e.glow = 0.3;
+      e.coreA = 0;
+      e.charge = 0;
+      e.seal = 0;
+      e.pl = null;
+      e.cur = null;
+      e.si = 0;
+      e.rn = 0;
+      e.rGate = 90;
+      e.slamCrit = false;
+      e.slamAct = false;
+      e.hot = 0;
+      e.kick = 0;
+      e.tok = T.burst;  // hit allowance (token bucket)
+      e.tokT = 0;
+      e.ripple = 0;     // ring effect for a hit that was shrugged off
+      e.core = { name: 'core', ox: 0, oy: 0, w: T.cs, h: T.cs, hp: ch, max: ch, vuln: false, solid: false, harmless: true, expl: 'xl', score: 8000 };
+      e.parts = [e.core];
+      e.stones = [];
+      for (let i = 0; i < T.n; i++) {
+        const p = { name: 'st' + i, ox: 400, oy: 0, w: T.sw, h: T.sh, hp: 99999, vuln: false, harmless: true, expl: 'm' };
+        e.parts.push(p);
+        e.stones.push({
+          i, a0: (i * TAU) / T.n, v: i % 3, gl: S2_HW_GL[i], p, mode: 'enter', t: 0, t0: 6 + i * 20, x: W + 60, y: T.cy, show: false,
+          glow: 0.3, red: 0, cd: 20 + i * 15, fire: 0, armed: false, flash: 0, bullet: null, hx: S2_HW_T.hx, lane: T.cy, edge: 30,
+        });
+      }
+    },
+    update(e) {
+      const T = S2_HW;
+      e.pt++;
+      if (e.st === 'enter') s2_hwEnter(e);
+      else if (e.st === 'turn') s2_hwTurn(e);
+      else s2_hwDirect(e);
+      if (e.st !== 'enter') e.om += (e.omT - e.om) * 0.05;
+      e.ang += e.om;
+      // a slow sway so the lane to the crystal keeps drifting (a little more in phase 2)
+      e.swayK = e.st === 'enter' ? 0 : Math.min(1, e.swayK + 0.01);
+      const amp = e.st === 'p2' || e.st === 'turn' ? 8 : 6;
+      e.x = T.cx + 3 * Math.sin(e.t * 0.013) * e.swayK;
+      e.y = T.cy + amp * Math.sin(e.t * 0.0105) * e.swayK;
+      s2_hwStones(e);
+      e.core.ox = 0;
+      e.core.oy = 0;
+      if (e.ripple > 0) e.ripple--;
+      e.kick *= 0.88;
+      e.glow += (s2_hwExposure(e) - e.glow) * 0.3;
+    },
+    gauge(e) {
+      const c = e.core;
+      return c.dead ? 0 : Math.max(0, c.hp) / c.max;
+    },
+    onPartHurt(e, p, dmg) {
+      if (p !== e.core) return;
+      // armour: the crystal only takes so many hits per second (more guns, more allowance); the surplus ripples off as a ring of light
+      const n = G.player.sources().length, g = 1 + 0.1 * (n - 1) + 0.4 * Math.max(0, n - 3);
+      e.tok = Math.min(S2_HW.burst * g, e.tok + ((e.t - e.tokT) * S2_HW.rate * g) / 60);
+      e.tokT = e.t;
+      if (e.tok < 1) {
+        p.hp += dmg;
+        p.flash = 0;
+        e.ripple = 8;
+        return;
+      }
+      e.tok -= 1;
+      // phase 1 cannot be skipped: the damage that would take the crystal below half is absorbed and starts the turn
+      if (e.st !== 'p2' && p.hp < p.max * 0.5) {
+        p.hp = p.max * 0.5;
+        if (e.st === 'p1') s2_hwBeginTurn(e);
+      }
+    },
+    onPartDeath(e, p) {
+      if (p === e.core) G.kill(e);
+    },
+    onDeath(e) {
+      // the crystal shatters, the stones go dark, drift apart and crumble (drawn by drawWreck)
+      const wr = { stones: [], shards: [] };
+      e.stones.forEach((s, i) => {
+        const a = Math.atan2(s.y - e.y, s.x - e.x);
+        const gone = s.mode === 'ram' || s.mode === 'away';
+        const w = { x: s.x, y: s.y, vx: Math.cos(a) * rnd(0.25, 0.5), vy: Math.sin(a) * rnd(0.25, 0.5) - 0.15, rot: 0, vr: rnd(-0.03, 0.03), v: s.v, gl: s.gl, tb: 40 + i * 12 + (i % 2) * 6, gone };
+        wr.stones.push(w);
+        if (!gone) {
+          G.later(w.tb, () => {
+            const t = w.tb;
+            const x = w.x + w.vx * t, y = w.y + w.vy * t + 0.003 * t * t;
+            G.explode(x, y, 's', { quiet: i % 2 === 1 });
+            G.debris(x, y, 10);
+            s2_hwDust(x, y, 10, 1.2, 40);
+          });
+        }
+      });
+      for (let i = 0; i < 12; i++) {
+        const a = (i / 12) * TAU + rnd(-0.2, 0.2), sp = rnd(0.8, 2.2);
+        wr.shards.push({ vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, rot: rnd(TAU), vr: rnd(-0.2, 0.2), sz: 2 + (i % 3) });
+      }
+      e.wreck = wr;
+      G.fx.push({ k: 'fn', x: e.x, y: e.y, t: 0, life: 136, draw: (c, f) => ENEMIES.s2_henge.drawWreck(e, c, f) });
+      sfx('shieldBreak');
+      G.flash = Math.max(G.flash, 3); // the engine does not draw it when flash effects are off
+      G.shake = Math.max(G.shake, 6);
+      G.bossDefeated(e);
+    },
+    drawWreck(e, c, f) {
+      const wr = e.wreck, t = f.t;
+      // the stones: runes die out, they tumble apart and finally crumble
+      for (const w of wr.stones) {
+        if (w.gone || t > w.tb) continue;
+        const x = w.x + w.vx * t, y = w.y + w.vy * t + 0.003 * t * t;
+        c.save();
+        c.translate(Math.round(x), Math.round(y));
+        c.rotate(w.rot + w.vr * t);
+        Sprites.draw(c, 's2_hw_stone' + w.v, 0, 0, { flash: !G.reduceFlash && t > w.tb - 3, alpha: t > w.tb - 3 ? 0.65 : 1 });
+        if (t < 24) Sprites.draw(c, 's2_glyph' + w.gl, 0.5, -3.5, { alpha: 1 - t / 24 });
+        c.restore();
+      }
+      // the crystal: a white burst, then shards flying apart
+      if (t < 10) {
+        const k = 1 - t / 10;
+        c.globalAlpha = k;
+        c.fillStyle = '#ffffff';
+        const L = G.reduceFlash ? 7 : 18 + t * 2;
+        c.fillRect(Math.round(e.x) - L, Math.round(e.y), L * 2, 1);
+        c.fillRect(Math.round(e.x), Math.round(e.y) - L, 1, L * 2);
+        c.globalAlpha = 1;
+        if (!G.reduceFlash) Sprites.draw(c, 's2_hw_core_b', e.x, e.y, { flash: true });
+      }
+      if (t < 54) {
+        const oc = c.globalCompositeOperation;
+        c.globalCompositeOperation = 'lighter';
+        Sprites.draw(c, 's2_hw_haloc', e.x, e.y, { alpha: Math.max(0, 1 - t / 40) * 0.8 });
+        c.globalCompositeOperation = oc;
+        for (const sh of wr.shards) {
+          const x = e.x + sh.vx * t, y = e.y + sh.vy * t + 0.01 * t * t;
+          c.globalAlpha = Math.min(1, (54 - t) / 18);
+          c.fillStyle = t & 2 ? '#ffffff' : '#9ee8ff';
+          c.fillRect(Math.round(x), Math.round(y), sh.sz, 1);
+          c.fillRect(Math.round(x), Math.round(y), 1, sh.sz);
+        }
+        c.globalAlpha = 1;
+      }
+    },
+    draw(e, c) {
+      s2_hwDrawTrack(c, e);
+      s2_hwDrawCore(c, e);
+      for (const s of e.stones) if (s.mode === 'hover' || (s.mode === 'glide' && s.t > 18)) s2_hwDrawLane(c, s);
+      for (const s of e.stones) s2_hwDrawStone(c, e, s);
+    },
+  };
+
+  /* ===============================================================
    * THE STAGE
    *
    *   0-560     moonrise plateau: the swarm is introduced (sine, braid, fishnet, loops)
@@ -1497,7 +2380,7 @@
    *   2000-2900 SWARM RUSH: 100 drones in patterns, then the Hive Queen (mid-boss)
    *   2900-3300 hanging arcade: round arches, stone eyes and turrets in the bays
    *   3300-3720 dolmen field: calm, three capsule carriers
-   *   3720+     Guardian Core arena (flat)
+   *   3720+     Henge Warden arena (flat)
    *
    * Pacing rules used below: after every checkpoint the first swarm stream
    * is triggered >= 160 px later and the first stone-anchored enemy sits
@@ -1581,7 +2464,7 @@
       sw(3630, { pat: 'braid', n: 14, gap: 5, y: 130, amp: 26, per: 100, speed: 1.4, carry: 'last' });
 
       /* ---- boss ---- */
-      S.boss(BOSS_X, 'bigcore', { level: 2 });
+      S.boss(BOSS_X, 's2_henge', {});
     },
   });
 })();
