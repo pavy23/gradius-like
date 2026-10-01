@@ -105,6 +105,15 @@ Gradius 스타일의 **도트 그래픽 횡스크롤 슈팅 게임**입니다. �
 
 6면(Nucleus)과 7면(거대한 뇌)도 각각 전용 보스입니다.
 
+| | |
+| --- | --- |
+| ![1면 Magma Wyrm](docs/screenshots/boss1_magma_wyrm.png)<br>**1면 Magma Wyrm** · 돌진 예고 차선이 뜬 순간 | ![2면 Henge Warden](docs/screenshots/boss2_henge_warden.png)<br>**2면 Henge Warden** · 공전하는 선돌과 룬 볼트 |
+| ![3면 Tide Colossus](docs/screenshots/boss3_tide_colossus.png)<br>**3면 Tide Colossus** · 입이 열려 약점이 드러난 순간 | ![4면 Ash Phoenix](docs/screenshots/boss4_ash_phoenix.png)<br>**4면 Ash Phoenix** · 가슴 보석이 약점, 날개는 방어 |
+| ![5면 Maw Leviathan](docs/screenshots/boss5_maw_leviathan.png)<br>**5면 Maw Leviathan** · 아가리가 열려 목구멍 코어가 드러난 순간 | ![6면 Nucleus](docs/screenshots/boss6_nucleus.png)<br>**6면 Nucleus** · 세포막이 열려 핵이 드러난 순간 |
+| ![7면 거대한 뇌 (1단계)](docs/screenshots/boss7_brain.png)<br>**7면 거대한 뇌** · 1단계, 유리 탱크 속의 뇌와 눈알 드론 | ![7면 거대한 뇌 (3단계)](docs/screenshots/boss7_brain_enrage.png)<br>**7면 거대한 뇌** · 3단계, 격노한 뇌 |
+
+※ 보스 화면은 봇이 무적 모드로 1면부터 끝까지 플레이하는 동안 캡처한 실제 게임 화면입니다(오토샷 ON, 옵션은 3개 이상이 되도록 지급).
+
 ## 개발
 
 ```
