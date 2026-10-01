@@ -231,11 +231,11 @@ unpause tentacle cellPop electric stomp warp`. Music tracks: `stage1..stage7`, `
   sequence), captioned with time / boss state / health. Open it and look: sprites, telegraphs, HUD overlaps.
 * **URL parameters**: `?stage=N` (start at the N-th registered stage, 1-based), `&god=1` (invulnerable), `&diff=easy|normal|hard`,
   `&debug=1` (entity counters), `&manual=1` (the page does not start its own loop; tests call `G.step()` / `G.render()`),
-  `&auto=1|0` (auto-fire for this visit only), `&touch=1` (build the touch controls on a desktop), `&sens=1.3` (touch drag feel).
+  `&auto=1|0` (auto-fire for this visit only; it is ON by default, so `auto=0` is for tests that must not fire), `&touch=1` (build the touch controls on a desktop), `&sens=1.3` (touch drag feel).
 * **Scripting the page** (from Playwright or the console): `G.step()` advances one frame (call `G.render()` before a
   screenshot); `G.resetWorld(camX)` + `G.player.respawn(false)` teleports to a scroll position; `G.player.speedLv = 5;
   G.player.laser = true; G.player.options = 4;` grants upgrades; `Input.setVirtual('fire', true)` presses keys
-  (or `G.autoShot = true` to fire without holding anything); `Input.addDrag(dx, dy)` requests a finger-style move in game
+  (auto-fire is ON by default, so the ship already fires without it; `G.autoShot = false` or `?auto=0` for a silent ship); `Input.addDrag(dx, dy)` requests a finger-style move in game
   pixels (the player applies at most `Player.dragSpeed()` per step);
   `G.gallery('prefix')` draws a sprite sheet; `Math.random` can be replaced by a seeded generator for reproducible runs.
 * Always look at screenshots of every section, every enemy type and each boss phase (contact sheets of a whole stage
