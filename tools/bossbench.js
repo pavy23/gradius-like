@@ -3,7 +3,7 @@
 /*
  * Boss fight benchmark (needs Playwright + Chromium).
  *
- *   node tools/bossbench.js <stage 1-7> [--power none|mid|full] [--runs 3] [--seed 1]
+ *   node tools/bossbench.js <stage 1-7> [--power none|mid|full] [--runs 3] [--seed 1] [--diff easy|normal|hard] [--loop 1]
  *                                       [--bot '{"every":6,"horizon":8}'] [--god] [--trace] [--url file-or-url]
  *
  * Starts at the stage's last checkpoint (where the player respawns after dying in front of the boss), optionally
@@ -41,6 +41,8 @@ const power = opt('power', 'none');
 const runs = Math.max(1, parseInt(opt('runs', '1'), 10) || 1);
 const seed0 = parseInt(opt('seed', '1'), 10) || 1;
 const botOpts = JSON.parse(opt('bot', '{"every":6,"horizon":8}'));
+const diffKey = opt('diff', '');
+const loopNo = Math.max(0, parseInt(opt('loop', '0'), 10) || 0); // 1 = second loop of the game (harder, more HP)
 const url = opt('url', 'file://' + path.resolve(__dirname, '..', 'index.html'));
 
 (async () => {
@@ -61,10 +63,10 @@ const url = opt('url', 'file://' + path.resolve(__dirname, '..', 'index.html'));
         return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
       };
     }, seed0 + run);
-    await page.goto(url + (url.includes('?') ? '&' : '?') + 'manual=1&autostart=1&stage=' + stage);
+    await page.goto(url + (url.includes('?') ? '&' : '?') + 'manual=1&autostart=1&stage=' + stage + (diffKey ? '&diff=' + diffKey : ''));
     await page.waitForTimeout(300);
     await page.addScriptTag({ path: path.join(__dirname, 'bot.js') });
-    const r = await page.evaluate(({ opts, power, god, trace }) => {
+    const r = await page.evaluate(({ opts, power, god, trace, loopNo }) => {
       for (let i = 0; i < 140; i++) G.step(); // stage intro
       const cps = G.stage.checkpoints;
       G.cpIdx = cps.length - 1;
@@ -80,6 +82,7 @@ const url = opt('url', 'file://' + path.resolve(__dirname, '..', 'index.html'));
         if (full) P.shield = 4;
       }
       G.god = god;
+      G.loop = loopNo;
       let fightStart = -1, attempts = 0, prevPhase = null, dyingAt = -1;
       const deaths = [], timeline = [];
       const MAX = 40000;
@@ -98,7 +101,7 @@ const url = opt('url', 'file://' + path.resolve(__dirname, '..', 'index.html'));
         if (G.bossPhase === 'dying') { dyingAt = i; break; }
       }
       return { fightSec: dyingAt > 0 ? Math.round(((dyingAt - fightStart) / 60) * 10) / 10 : null, attempts, deaths, timeline, mode: G.mode, bossPhase: G.bossPhase, stageId: G.stage.id, frames: i };
-    }, { opts: botOpts, power, god: flag('god'), trace: flag('trace') });
+    }, { opts: botOpts, power, god: flag('god'), trace: flag('trace'), loopNo });
     results.push(r);
     const dl = r.deaths.map((d) => `${d.sec === null ? '-' : d.sec + 's'} ${d.hit}`).join('; ');
     console.log(`run ${run + 1}/${runs} seed ${seed0 + run}: ` + (r.fightSec === null ? `boss NOT defeated (mode ${r.mode}, phase ${r.bossPhase}, ${(r.frames / 60).toFixed(0)} s simulated)` : `boss defeated after ${r.fightSec} s of fight (attempt ${r.attempts})`) + `, bot deaths ${r.deaths.length}` + (dl ? ` [${dl}]` : ''));
@@ -107,7 +110,7 @@ const url = opt('url', 'file://' + path.resolve(__dirname, '..', 'index.html'));
   }
   const secs = results.map((r) => r.fightSec).filter((s) => s !== null).sort((a, b) => a - b);
   const tgt = power === 'none' ? '35-60 s' : power === 'full' ? '8-20 s' : '15-30 s';
-  console.log(`stage ${stage} boss, power ${power}${flag('god') ? ', god mode' : ''}: ` + (secs.length ? `fight ${secs[0]}-${secs[secs.length - 1]} s (median ${secs[Math.floor(secs.length / 2)]} s) over ${secs.length}/${runs} runs; target ${tgt}` : 'never defeated'));
+  console.log(`stage ${stage} boss, power ${power}${flag('god') ? ', god mode' : ''}${diffKey ? ', diff ' + diffKey : ''}${loopNo ? ', loop ' + (loopNo + 1) : ''}: ` + (secs.length ? `fight ${secs[0]}-${secs[secs.length - 1]} s (median ${secs[Math.floor(secs.length / 2)]} s) over ${secs.length}/${runs} runs; target ${tgt}` : 'never defeated'));
   const real = errors.filter((e, i) => errors.indexOf(e) === i);
   if (real.length) console.log('CONSOLE ERRORS:\n  ' + real.join('\n  '));
   await browser.close();
